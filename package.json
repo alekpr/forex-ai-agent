@@ -13,6 +13,7 @@
     "test:agents": "tsx scripts/test-agents.ts",
     "telegram:set-webhook": "tsx scripts/set-telegram-webhook.ts",
     "import:backtest": "tsx scripts/import-backtest.ts",
+    "import:candles": "tsx scripts/import-candles.ts",
     "clear:trades": "tsx scripts/clear-trade-logs.ts",
     "lint": "eslint src --ext .ts"
   },
