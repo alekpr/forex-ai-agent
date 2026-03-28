@@ -1,10 +1,9 @@
 import { env } from '../config/env';
-import { MarketDataService } from '../services/market-data/MarketDataService';
+import { CandleService } from '../services/CandleService';
 import { IndicatorService } from '../services/IndicatorService';
 import { EmbeddingService } from '../services/EmbeddingService';
 import { ClaudeAiService } from '../services/ClaudeAiService';
 import { VectorSearchService } from '../services/VectorSearchService';
-import { CandleRepository } from '../repositories/CandleRepository';
 import { IndicatorRepository } from '../repositories/IndicatorRepository';
 import { AlertRepository } from '../repositories/AlertRepository';
 import { AnalyzeRequest, AnalyzeResponse } from '../types/agent';
@@ -13,22 +12,20 @@ import { OHLCCandle, Timeframe, MultiTimeframeIndicators } from '../types/market
 const TIMEFRAMES: Timeframe[] = ['5m', '15m', '1h', '4h'];
 
 export class MarketAnalyzerAgent {
-  private readonly marketData: MarketDataService;
+  private readonly candleSvc: CandleService;
   private readonly indicatorSvc: IndicatorService;
   private readonly embeddingSvc: EmbeddingService;
   private readonly claudeSvc: ClaudeAiService;
   private readonly vectorSearch: VectorSearchService;
-  private readonly candleRepo: CandleRepository;
   private readonly indicatorRepo: IndicatorRepository;
   private readonly alertRepo: AlertRepository;
 
   constructor() {
-    this.marketData = new MarketDataService();
+    this.candleSvc = new CandleService();
     this.indicatorSvc = new IndicatorService();
     this.embeddingSvc = new EmbeddingService();
     this.claudeSvc = new ClaudeAiService();
     this.vectorSearch = new VectorSearchService();
-    this.candleRepo = new CandleRepository();
     this.indicatorRepo = new IndicatorRepository();
     this.alertRepo = new AlertRepository();
   }
@@ -41,20 +38,17 @@ export class MarketAnalyzerAgent {
     try {
       const { symbol, timeframe, riskLevel = 'medium' } = request;
 
-      // Step 2: Fetch current candles + compute indicators
-      const candlesByTf: Partial<Record<Timeframe, OHLCCandle[]>> = {};
-      const marketSnapshot: Record<string, OHLCCandle> = {};
+      // Step 2: Fetch candles (DB first, API fallback) + build candle context from DB
+      const [{ candlesByTf, sourcesByTf }, candleContext] = await Promise.all([
+        this.candleSvc.getMultiTimeframeCandles(symbol, TIMEFRAMES, 250),
+        this.candleSvc.buildCandleContext(symbol, timeframe, 50),
+      ]);
+      console.log(`[MarketAnalyzerAgent] Candle sources for ${symbol}:`, sourcesByTf);
 
-      await Promise.all(
-        TIMEFRAMES.map(async (tf) => {
-          const candles = await this.marketData.getOHLCCandles(symbol, tf, 250);
-          if (candles.length > 0) {
-            candlesByTf[tf] = candles;
-            marketSnapshot[tf] = candles[candles.length - 1];
-            await this.candleRepo.upsertCandles(candles);
-          }
-        })
-      );
+      const marketSnapshot: Record<string, OHLCCandle> = {};
+      for (const [tf, candles] of Object.entries(candlesByTf) as [Timeframe, OHLCCandle[]][]) {
+        if (candles.length > 0) marketSnapshot[tf] = candles[candles.length - 1];
+      }
 
       const indicators: MultiTimeframeIndicators =
         this.indicatorSvc.computeMultiTimeframe(candlesByTf);
@@ -81,14 +75,15 @@ export class MarketAnalyzerAgent {
       );
       const winRate = this.vectorSearch.calcWinRate(similarTrades);
 
-      // Step 4: Claude AI synthesis
+      // Step 4: Claude AI synthesis (with DB candle context enrichment)
       const aiResult = await this.claudeSvc.generateAnalysisRecommendation(
         symbol,
         timeframe,
         currentPrice,
         indicators,
         similarTrades,
-        riskLevel
+        riskLevel,
+        candleContext
       );
 
       // Persist alert for audit trail

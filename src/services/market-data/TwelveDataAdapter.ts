@@ -38,18 +38,30 @@ export class TwelveDataAdapter implements IMarketDataAdapter {
     this.apiKey = env.TWELVEDATA_API_KEY;
   }
 
+  /** Convert EURUSD → EUR/USD, XAUUSD → XAU/USD */
+  private formatSymbol(symbol: string): string {
+    const s = symbol.toUpperCase();
+    if (s.includes('/')) return s;
+    // 6-char forex pair e.g. EURUSD → EUR/USD
+    if (s.length === 6) return `${s.slice(0, 3)}/${s.slice(3)}`;
+    // 7-char commodity e.g. XAUUSD → XAU/USD
+    if (s.length === 7) return `${s.slice(0, 3)}/${s.slice(3)}`;
+    return s;
+  }
+
   async getOHLCCandles(
     symbol: string,
     timeframe: Timeframe,
     limit = 200
   ): Promise<OHLCCandle[]> {
     const interval = TF_MAP[timeframe];
+    const formattedSymbol = this.formatSymbol(symbol);
 
     const response = await axios.get<TwelveDataResponse>(
       `${this.baseUrl}/time_series`,
       {
         params: {
-          symbol,
+          symbol: formattedSymbol,
           interval,
           outputsize: limit,
           apikey: this.apiKey,
@@ -71,7 +83,7 @@ export class TwelveDataAdapter implements IMarketDataAdapter {
         high: parseFloat(v.high),
         low: parseFloat(v.low),
         close: parseFloat(v.close),
-        volume: parseInt(v.volume, 10),
+        volume: parseInt(v.volume, 10) || 0,
       }))
       .reverse(); // TwelveData returns newest first
   }

@@ -1,9 +1,8 @@
 import { env } from '../config/env';
-import { MarketDataService } from '../services/market-data/MarketDataService';
+import { CandleService } from '../services/CandleService';
 import { IndicatorService } from '../services/IndicatorService';
 import { EmbeddingService } from '../services/EmbeddingService';
 import { ClaudeAiService } from '../services/ClaudeAiService';
-import { CandleRepository } from '../repositories/CandleRepository';
 import { IndicatorRepository } from '../repositories/IndicatorRepository';
 import { TradeLogRepository } from '../repositories/TradeLogRepository';
 import { TradeResultRepository } from '../repositories/TradeResultRepository';
@@ -14,21 +13,19 @@ import { TradeLoggerResponse } from '../types/agent';
 const TIMEFRAMES: Timeframe[] = ['5m', '15m', '1h', '4h'];
 
 export class TradeLoggerAgent {
-  private readonly marketData: MarketDataService;
+  private readonly candleSvc: CandleService;
   private readonly indicatorSvc: IndicatorService;
   private readonly embeddingSvc: EmbeddingService;
   private readonly claudeSvc: ClaudeAiService;
-  private readonly candleRepo: CandleRepository;
   private readonly indicatorRepo: IndicatorRepository;
   private readonly tradeLogRepo: TradeLogRepository;
   private readonly tradeResultRepo: TradeResultRepository;
 
   constructor() {
-    this.marketData = new MarketDataService();
+    this.candleSvc = new CandleService();
     this.indicatorSvc = new IndicatorService();
     this.embeddingSvc = new EmbeddingService();
     this.claudeSvc = new ClaudeAiService();
-    this.candleRepo = new CandleRepository();
     this.indicatorRepo = new IndicatorRepository();
     this.tradeLogRepo = new TradeLogRepository();
     this.tradeResultRepo = new TradeResultRepository();
@@ -40,20 +37,18 @@ export class TradeLoggerAgent {
    */
   async logTrade(input: CreateTradeLogInput): Promise<TradeLoggerResponse> {
     try {
-      // Step 2: Fetch candles for all timeframes
-      const candlesByTf: Partial<Record<Timeframe, OHLCCandle[]>> = {};
-      const marketSnapshot: Record<string, OHLCCandle> = {};
-
-      await Promise.all(
-        TIMEFRAMES.map(async (tf) => {
-          const candles = await this.marketData.getOHLCCandles(input.symbol, tf, 250);
-          if (candles.length > 0) {
-            candlesByTf[tf] = candles;
-            marketSnapshot[tf] = candles[candles.length - 1]; // latest candle
-            await this.candleRepo.upsertCandles(candles);
-          }
-        })
+      // Step 2: Fetch candles for all timeframes (DB first, API fallback)
+      const { candlesByTf, sourcesByTf } = await this.candleSvc.getMultiTimeframeCandles(
+        input.symbol,
+        TIMEFRAMES,
+        250
       );
+      console.log(`[TradeLoggerAgent] Candle sources for ${input.symbol}:`, sourcesByTf);
+
+      const marketSnapshot: Record<string, OHLCCandle> = {};
+      for (const [tf, candles] of Object.entries(candlesByTf) as [Timeframe, OHLCCandle[]][]) {
+        if (candles.length > 0) marketSnapshot[tf] = candles[candles.length - 1];
+      }
 
       // Step 2 continued: Compute indicators for all timeframes
       const indicators: MultiTimeframeIndicators =
@@ -116,19 +111,18 @@ export class TradeLoggerAgent {
         return { success: false, message: `Trade ${tradeId} is already closed` };
       }
 
-      // Fetch exit market data
-      const candlesByTf: Partial<Record<Timeframe, OHLCCandle[]>> = {};
-      const exitMarketSnapshot: Record<string, OHLCCandle> = {};
-
-      await Promise.all(
-        TIMEFRAMES.map(async (tf) => {
-          const candles = await this.marketData.getOHLCCandles(tradeLog.symbol, tf, 250);
-          if (candles.length > 0) {
-            candlesByTf[tf] = candles;
-            exitMarketSnapshot[tf] = candles[candles.length - 1];
-          }
-        })
+      // Fetch exit market data (DB first, API fallback)
+      const { candlesByTf, sourcesByTf: exitSources } = await this.candleSvc.getMultiTimeframeCandles(
+        tradeLog.symbol,
+        TIMEFRAMES,
+        250
       );
+      console.log(`[TradeLoggerAgent] Exit candle sources for ${tradeLog.symbol}:`, exitSources);
+
+      const exitMarketSnapshot: Record<string, OHLCCandle> = {};
+      for (const [tf, candles] of Object.entries(candlesByTf) as [Timeframe, OHLCCandle[]][]) {
+        if (candles.length > 0) exitMarketSnapshot[tf] = candles[candles.length - 1];
+      }
 
       const exitIndicators = this.indicatorSvc.computeMultiTimeframe(candlesByTf);
 

@@ -10,6 +10,7 @@
     "migrate": "tsx src/db/migrate.ts",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:agents": "tsx scripts/test-agents.ts",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {

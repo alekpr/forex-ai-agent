@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env';
 import { MultiTimeframeIndicators } from '../types/market';
 import { CreateTradeLogInput, TradeLog, CloseTradeInput, TradeResultRecord, SimilarTrade } from '../types/trade';
+import { CandleContext } from './CandleService';
 
 export class ClaudeAiService {
   private readonly client: Anthropic;
@@ -110,7 +111,8 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
     currentPrice: number,
     indicators: MultiTimeframeIndicators,
     similarTrades: SimilarTrade[],
-    riskLevel: string
+    riskLevel: string,
+    candleContext?: CandleContext
   ): Promise<{
     recommendation: string;
     confidence: number;
@@ -138,26 +140,38 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
             .join('\n')
         : 'No similar historical trades found yet.';
 
-    const prompt = `You are an expert Forex AI advisor. Provide a trading recommendation based on current market conditions and historical performance.
+    // Build DB candle context section for prompt enrichment
+    const candleContextSection = candleContext?.available
+      ? `
+**Historical Market Context (from DB — last ${candleContext.lookbackCandles} candles on ${candleContext.timeframe}):**
+- Period: ${candleContext.periodStart} → ${candleContext.periodEnd}
+- Period High: ${candleContext.periodHigh} | Period Low: ${candleContext.periodLow} | Range: ${candleContext.priceRange}
+- Current Price Position in Range: ${candleContext.rangePositionPct}% (0%=at low, 100%=at high)
+- Recent Swing High: ${candleContext.recentSwingHigh} | Recent Swing Low: ${candleContext.recentSwingLow}
+- Candle Bias: ${candleContext.bullishCandles} bullish vs ${candleContext.bearishCandles} bearish
+- Recent Momentum (last 5 vs prior 5 candles avg): ${candleContext.recentMomentumPct && candleContext.recentMomentumPct > 0 ? '+' : ''}${candleContext.recentMomentumPct}%`
+      : '';
+
+    const prompt = `You are an expert Forex AI advisor. Provide a trading recommendation based on current market conditions, historical DB data, and past trade performance.
 
 **Symbol:** ${symbol} | **Timeframe:** ${timeframe} | **Current Price:** ${currentPrice}
 **Risk Level:** ${riskLevel}
 
-**Current Technical Indicators:**
+**Current Technical Indicators (Multi-timeframe):**
 ${indicatorSummary}
-
+${candleContextSection}
 **Similar Historical Trades (Vector Similarity Search):**
 ${similarTradesSummary}
 Historical Win Rate from similar setups: ${winRate}%
 
-Based on this analysis, provide a JSON response:
+Based on ALL the above data (indicators + DB candle context + historical trades), provide a JSON response:
 {
   "recommendation": "BUY" | "SELL" | "WAIT",
   "confidence": 0.0-1.0,
   "suggested_tp": number or null,
   "suggested_sl": number or null,
   "risk_score": 1-10,
-  "analysis": "3-5 sentence analysis explaining the recommendation, referencing specific indicators and historical patterns"
+  "analysis": "3-5 sentence analysis referencing specific indicators, price range position, candle bias, and historical patterns"
 }
 
 Be conservative with confidence scores. Only recommend BUY/SELL if conviction is high (>0.65).`;
