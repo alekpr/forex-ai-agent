@@ -12,6 +12,7 @@
     "test:watch": "jest --watch",
     "test:agents": "tsx scripts/test-agents.ts",
     "telegram:set-webhook": "tsx scripts/set-telegram-webhook.ts",
+    "import:backtest": "tsx scripts/import-backtest.ts",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
