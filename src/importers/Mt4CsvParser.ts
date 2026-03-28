@@ -26,10 +26,10 @@ export interface ParseOptions {
 
 // Pip multipliers per symbol type
 const PIP_MULTIPLIERS: Record<string, number> = {
-  XAUUSD: 10,   // $10 per pip
-  XAGUSD: 50,
-  DEFAULT_JPY: 100,  // JPY pairs
-  DEFAULT: 10,       // Most standard pairs (EURUSD, GBPUSD etc.) using 10 as base
+  XAUUSD: 10,     // 1 pip = 0.10 (price), multiplier = 1/0.1 = 10
+  XAGUSD: 50,     // 1 pip = 0.02
+  DEFAULT_JPY: 100,  // JPY pairs: 1 pip = 0.01
+  DEFAULT: 10000,    // Standard pairs (EURUSD, GBPUSD etc): 1 pip = 0.0001
 };
 
 function getPipMultiplier(symbol: string): number {

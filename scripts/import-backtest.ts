@@ -1,16 +1,18 @@
 /**
  * scripts/import-backtest.ts
  *
- * Import MT4/MT5 backtest CSV trades into the forex-ai-agent database.
+ * Import backtest CSV trades into the forex-ai-agent database.
  *
  * Usage:
- *   npm run import:backtest -- --file ./data/backtest.csv --timeframe 1h --strategy "EMA Cross"
+ *   npm run import:backtest -- --file ./data/backtest-sample.csv --format manual
+ *   npm run import:backtest -- --file ./data/mt4.csv --format mt4 --timeframe 1h --strategy "EMA Cross"
  *
  * Options:
- *   --file            Path to MT4/MT5 CSV export (required)
+ *   --file            Path to CSV file (required)
+ *   --format          CSV format: manual (default) | mt4
  *   --user-id         Target user UUID (defaults to env DEFAULT_USER_ID)
- *   --strategy        Strategy name used as userReason prefix (default: "Backtest")
- *   --timeframe       Trading timeframe: 5m|15m|1h|4h|1d (default: 1h)
+ *   --strategy        Strategy name prefix for MT4 format userReason (default: "Backtest")
+ *   --timeframe       Fallback timeframe for MT4 format: 5m|15m|1h|4h|1d (default: 1h)
  *   --dry-run         Preview parsed trades without inserting into DB
  *   --skip-indicators Skip TwelveData indicator fetch (faster, no API calls)
  *   --batch-delay     Milliseconds to wait between trades (default: 300)
@@ -21,6 +23,7 @@ import * as path from 'path';
 import { env } from '../src/config/env';
 import { query } from '../src/db/connection';
 import { Mt4CsvParser, ParsedBacktestTrade } from '../src/importers/Mt4CsvParser';
+import { ManualBacktestParser } from '../src/importers/ManualBacktestParser';
 import { HistoricalIndicatorFetcher } from '../src/importers/HistoricalIndicatorFetcher';
 import { EmbeddingService } from '../src/services/EmbeddingService';
 import { ClaudeAiService } from '../src/services/ClaudeAiService';
@@ -31,6 +34,7 @@ import { Timeframe, MultiTimeframeIndicators } from '../src/types/market';
 
 function parseArgs(): {
   file: string;
+  format: 'manual' | 'mt4';
   userId: string;
   strategy: string;
   timeframe: Timeframe;
@@ -58,8 +62,15 @@ function parseArgs(): {
     process.exit(1);
   }
 
+  const formatRaw = get('--format') ?? 'manual';
+  if (formatRaw !== 'manual' && formatRaw !== 'mt4') {
+    console.error(`❌ Invalid --format "${formatRaw}". Valid: manual, mt4`);
+    process.exit(1);
+  }
+
   return {
     file: path.resolve(file),
+    format: formatRaw as 'manual' | 'mt4',
     userId: get('--user-id') ?? env.DEFAULT_USER_ID,
     strategy: get('--strategy') ?? 'Backtest',
     timeframe: timeframeRaw as Timeframe,
@@ -214,9 +225,12 @@ async function main(): Promise<void> {
   console.log('🔄 Forex AI Agent — Backtest Import');
   console.log('─'.repeat(50));
   console.log(`📁 File:        ${opts.file}`);
+  console.log(`� Format:      ${opts.format}`);
   console.log(`👤 User ID:     ${opts.userId}`);
-  console.log(`📋 Strategy:    ${opts.strategy}`);
-  console.log(`⏱  Timeframe:   ${opts.timeframe}`);
+  if (opts.format === 'mt4') {
+    console.log(`📋 Strategy:    ${opts.strategy}`);
+    console.log(`⏱  Timeframe:   ${opts.timeframe}`);
+  }
   console.log(`🏃 Dry run:     ${opts.dryRun ? 'YES (no DB writes)' : 'NO'}`);
   console.log(`📊 Indicators:  ${opts.skipIndicators ? 'SKIPPED' : 'fetching from TwelveData'}`);
   console.log(`⏳ Batch delay: ${opts.batchDelay}ms`);
@@ -224,8 +238,16 @@ async function main(): Promise<void> {
 
   // 1. Parse CSV
   console.log('\n📂 Parsing CSV...');
-  const parser = new Mt4CsvParser({ timeframe: opts.timeframe, strategyName: opts.strategy });
-  const { trades, errors: parseErrors } = await parser.parse(opts.file);
+  let trades: ParsedBacktestTrade[];
+  let parseErrors: string[];
+
+  if (opts.format === 'manual') {
+    const parser = new ManualBacktestParser();
+    ({ trades, errors: parseErrors } = parser.parse(opts.file));
+  } else {
+    const parser = new Mt4CsvParser({ timeframe: opts.timeframe, strategyName: opts.strategy });
+    ({ trades, errors: parseErrors } = await parser.parse(opts.file));
+  }
 
   if (parseErrors.length > 0) {
     console.warn(`\n⚠️  Parse warnings (${parseErrors.length}):`);
