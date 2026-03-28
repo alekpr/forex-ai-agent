@@ -5,6 +5,7 @@ import tradeRoutes from './routes/tradeRoutes';
 import analyzeRoutes from './routes/analyzeRoutes';
 import alertRoutes, { scheduler } from './routes/alertRoutes';
 import { AlertRepository } from './repositories/AlertRepository';
+import { TelegramBotService } from './telegram/TelegramBotService';
 
 const app = express();
 
@@ -19,6 +20,18 @@ app.get('/health', (_req, res) => {
 app.use('/api/trades', tradeRoutes);
 app.use('/api/analyze', analyzeRoutes);
 app.use('/api/alerts', alertRoutes);
+
+// Telegram webhook (mounted before 404 handler)
+let telegramBot: TelegramBotService | null = null;
+if (env.TELEGRAM_BOT_TOKEN) {
+  try {
+    telegramBot = new TelegramBotService();
+    app.use('/telegram/webhook', telegramBot.getMiddleware());
+    console.log('🤖 Telegram bot webhook mounted at /telegram/webhook');
+  } catch (err) {
+    console.warn('⚠️  Telegram bot not started:', (err as Error).message);
+  }
+}
 
 // 404 handler
 app.use((_req, res) => {

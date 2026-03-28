@@ -17,6 +17,8 @@ const envSchema = z.object({
   LINE_NOTIFY_TOKEN: z.string().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+  TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
+  TELEGRAM_WEBHOOK_URL: z.string().url().optional(),
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
