@@ -34,12 +34,13 @@ import { OHLCCandle, Timeframe } from '../src/types/market';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const VALID_STORE_TIMEFRAMES: Timeframe[] = ['5m', '15m', '1h', '4h', '1d'];
+const VALID_STORE_TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1d'];
 
 const TF_MINUTES: Record<string, number> = {
   '1m': 1,
   '5m': 5,
   '15m': 15,
+  '30m': 30,
   '1h': 60,
   '4h': 240,
   '1d': 1440,

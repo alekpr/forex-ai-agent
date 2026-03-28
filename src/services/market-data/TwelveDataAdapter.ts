@@ -7,6 +7,7 @@ import { IMarketDataAdapter } from './IMarketDataAdapter';
 const TF_MAP: Record<Timeframe, string> = {
   '5m': '5min',
   '15m': '15min',
+  '30m': '30min',
   '1h': '1h',
   '4h': '4h',
   '1d': '1day',

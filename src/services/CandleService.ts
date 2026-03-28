@@ -15,6 +15,7 @@ import { CandleRepository } from '../repositories/CandleRepository';
 const STALE_THRESHOLD_MS: Record<Timeframe, number> = {
   '5m':  10 * 60 * 1000,   // 10 minutes
   '15m': 30 * 60 * 1000,   // 30 minutes
+  '30m': 60 * 60 * 1000,   // 1 hour
   '1h':  2 * 60 * 60 * 1000,  // 2 hours
   '4h':  8 * 60 * 60 * 1000,  // 8 hours
   '1d':  26 * 60 * 60 * 1000, // 26 hours (covers weekend)

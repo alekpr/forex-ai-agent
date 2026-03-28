@@ -1,4 +1,4 @@
-export type Timeframe = '5m' | '15m' | '1h' | '4h' | '1d';
+export type Timeframe = '5m' | '15m' | '30m' | '1h' | '4h' | '1d';
 
 export interface OHLCCandle {
   time: Date;
@@ -35,6 +35,7 @@ export interface IndicatorSnapshot {
 export interface MultiTimeframeIndicators {
   '5m'?: IndicatorSnapshot;
   '15m'?: IndicatorSnapshot;
+  '30m'?: IndicatorSnapshot;
   '1h'?: IndicatorSnapshot;
   '4h'?: IndicatorSnapshot;
   '1d'?: IndicatorSnapshot;
