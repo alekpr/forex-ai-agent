@@ -22,7 +22,7 @@ export class ClaudeAiService {
   ): Promise<string> {
     const indicatorSummary = this.formatIndicatorsForPrompt(indicators);
 
-    const prompt = `You are a professional Forex trading analyst. Analyze the market conditions at the time of this trade entry and provide a concise assessment.
+    const prompt = `You are a professional Forex trading analyst. Analyze the market conditions at the time of this trade entry and provide a concise assessment. ตอบเป็นภาษาไทยทั้งหมด
 
 **Trade Details:**
 - Symbol: ${tradeInput.symbol}
@@ -63,7 +63,7 @@ Be concise and technical.`;
     result: CloseTradeInput,
     exitIndicators: MultiTimeframeIndicators
   ): Promise<{ lesson: string; patternTags: string[] }> {
-    const prompt = `You are a Forex trading coach. Analyze this completed trade and provide actionable lessons.
+    const prompt = `You are a Forex trading coach. Analyze this completed trade and provide actionable lessons. ตอบเป็นภาษาไทยทั้งหมด (ยกเว้น pattern_tags ให้เป็นภาษาอังกฤษ)
 
 **Trade Summary:**
 - Symbol: ${trade.symbol} | Direction: ${trade.direction} | Timeframe: ${trade.timeframe}
@@ -152,7 +152,7 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
 - Recent Momentum (last 5 vs prior 5 candles avg): ${candleContext.recentMomentumPct && candleContext.recentMomentumPct > 0 ? '+' : ''}${candleContext.recentMomentumPct}%`
       : '';
 
-    const prompt = `You are an expert Forex AI advisor. Provide a trading recommendation based on current market conditions, historical DB data, and past trade performance.
+    const prompt = `You are an expert Forex AI advisor. Provide a trading recommendation based on current market conditions, historical DB data, and past trade performance. ตอบเป็นภาษาไทยทั้งหมดในส่วน analysis (ค่า recommendation/confidence/suggested_tp/suggested_sl/risk_score ให้คงรูปแบบเดิม)
 
 **Symbol:** ${symbol} | **Timeframe:** ${timeframe} | **Current Price:** ${currentPrice}
 **Risk Level:** ${riskLevel}

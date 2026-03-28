@@ -28,9 +28,9 @@ export function formatTradeLogged(result: TradeLoggerResponse): string {
   return [
     `✅ *บันทึก Trade สำเร็จ*`,
     ``,
-    `🆔 ID: \`${escape(d.tradeId)}\``,
+    `🆔 รหัส Trade: \`${escape(d.tradeId)}\``,
     ``,
-    `📊 *Market Comment:*`,
+    `📊 *ความเห็นของ AI:*`,
     escapeRaw(truncate(stripMarkdown(d.aiMarketComment ?? ''), 600)),
     rsiLine,
   ].join('\n');
@@ -46,7 +46,7 @@ export function formatTradeClosed(result: { success: boolean; message: string; d
   return [
     `🏁 *ปิด Trade สำเร็จ*`,
     ``,
-    `💡 *AI Lesson:*`,
+    `💡 *บทเรียนจาก AI:*`,
     escapeRaw(truncate(stripMarkdown(lesson), 700)),
   ].join('\n');
 }
@@ -68,7 +68,7 @@ export function formatAnalysis(response: AnalyzeResponse): string {
   const wins = d.winRate != null ? `${d.winRate}%` : '—';
 
   const similarSection = d.similarTrades?.length
-    ? `\n\n🔁 *Similar Past Trades:* ${escape(d.similarTrades.length)} รายการ \\(win rate ${escape(wins)}\\)`
+    ? `\n\n🔁 *Trade ที่คล้ายกันในอดีต:* ${escape(d.similarTrades.length)} รายการ \\(อัตราชนะ ${escape(wins)}\\)`
     : '';
 
   const tp = d.suggestedTp ? `TP: ${escape(d.suggestedTp)}` : null;
@@ -80,10 +80,10 @@ export function formatAnalysis(response: AnalyzeResponse): string {
 
   return [
     `${emoji} *${escape(d.symbol)} ${escape(d.timeframe)} — ${escape(rec)}*`,
-    `📊 Confidence: *${escape(confidencePct)}%* \\| Risk Score: *${escape(d.riskScore)}*`,
+    `📊 ความมั่นใจ: *${escape(confidencePct)}%* \\| ความเสี่ยง: *${escape(d.riskScore)}*`,
     levelsLine,
     ``,
-    `📝 *AI Analysis:*`,
+    `📝 *การวิเคราะห์ของ AI:*`,
     analysis,
     similarSection,
   ].filter(s => s !== null).join('\n');
@@ -96,7 +96,7 @@ export function formatOpenTradeItem(trade: TradeLog, index: number): string {
 }
 
 export function formatOpenTradesList(trades: TradeLog[]): string {
-  if (!trades.length) return '📭 ไม่พบ open trade ที่ยังค้างอยู่';
+  if (!trades.length) return '📭 ไม่พบ trade ที่ยังเปิดอยู่';
   const lines = trades.map((t, i) => escape(formatOpenTradeItem(t, i)));
   return `📋 *เลือก trade ที่ต้องการปิด:*\n\n${lines.join('\n')}`;
 }

@@ -125,7 +125,7 @@ export async function routeMessage(userMessage: string): Promise<RouterResult | 
 function helpMessage(): string {
   return `👋 *Forex AI Bot* ช่วยได้ 3 อย่าง:\n\n` +
     `📝 *บันทึก trade* — พิมพ์เช่น:\n"บันทึก trade EURUSD BUY 1h"\n\n` +
-    `🏁 *ปิด trade* — พิมพ์เช่น:\n"ปิด trade" หรือ "close trade"\n\n` +
+    `🏁 *ปิด trade* — พิมพ์เช่น:\n"ปิด trade"\n\n` +
     `📊 *วิเคราะห์ตลาด* — พิมพ์เช่น:\n"วิเคราะห์ EURUSD 1h"\n\n` +
-    `พิมพ์ /cancel เพื่อยกเลิกการสนทนาปัจจุบัน`;
+    `พิมพ์ /cancel เพื่อยกเลิกคำสั่งปัจจุบัน`;
 }

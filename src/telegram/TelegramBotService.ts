@@ -39,7 +39,8 @@ export class TelegramBotService {
 
   /** Returns Express-compatible middleware for the webhook route */
   getMiddleware(): RequestHandler {
-    return this.bot.webhookCallback('/telegram/webhook');
+    // Pass '/' because Express already strips the mount path prefix
+    return this.bot.webhookCallback('/');
   }
 
   // ─── Handlers ─────────────────────────────────────────────────────────────
@@ -47,12 +48,12 @@ export class TelegramBotService {
   private registerHandlers(): void {
     this.bot.command('start', async (ctx) => {
       if (!this.isAllowed(ctx)) return;
-      await ctx.replyWithMarkdownV2(
-        `👋 *Forex AI Trading Bot*\n\n` +
-        `ช่วยได้ 3 อย่าง:\n` +
-        `📝 บันทึก trade — "บันทึก trade EURUSD BUY 1h"\n` +
-        `🏁 ปิด trade — "ปิด trade"\n` +
-        `📊 วิเคราะห์ — "วิเคราะห์ EURUSD 1h"\n\n` +
+      await ctx.reply(
+        `👋 ยินดีต้อนรับสู่ Forex AI Trading Bot\n\n` +
+        `บอทนี้ช่วยได้ 3 อย่าง:\n` +
+        `📝 บันทึก trade — พิมพ์ เช่น "บันทึก trade EURUSD BUY 1h"\n` +
+        `🏁 ปิด trade — พิมพ์ "ปิด trade"\n` +
+        `📊 วิเคราะห์ตลาด — พิมพ์ เช่น "วิเคราะห์ EURUSD 1h"\n\n` +
         `พิมพ์ /cancel เพื่อยกเลิกคำสั่งปัจจุบัน`
       );
     });
