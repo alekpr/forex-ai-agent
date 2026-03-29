@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env';
-import { MultiTimeframeIndicators } from '../types/market';
+import { MultiTimeframeIndicators, TrendConfluenceResult } from '../types/market';
 import { CreateTradeLogInput, TradeLog, CloseTradeInput, TradeResultRecord, SimilarTrade } from '../types/trade';
 import { CandleContext } from './CandleService';
 
@@ -112,6 +112,7 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
     indicators: MultiTimeframeIndicators,
     similarTrades: SimilarTrade[],
     riskLevel: string,
+    trendContext: TrendConfluenceResult,
     candleContext?: CandleContext
   ): Promise<{
     recommendation: string;
@@ -123,7 +124,6 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
   }> {
     const indicatorSummary = this.formatIndicatorsForPrompt(indicators);
     const winTrades = similarTrades.filter((t) => t.result === 'WIN');
-    const lossTrades = similarTrades.filter((t) => t.result === 'LOSS');
     const winRate =
       similarTrades.length > 0
         ? ((winTrades.length / similarTrades.length) * 100).toFixed(0)
@@ -157,6 +157,16 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
 **Symbol:** ${symbol} | **Timeframe:** ${timeframe} | **Current Price:** ${currentPrice}
 **Risk Level:** ${riskLevel}
 
+**━━ STRATEGY CONTEXT (Rule-Based Pre-Analysis) ━━**
+${trendContext.confluenceSummary}
+
+**Strategy Rules (MUST FOLLOW):**
+1. Primary trend is H1. Recommendation direction MUST align with H1 unless there is an exceptionally strong H1 reversal signal.
+2. If H4 conflicts H1 → explicitly warn in analysis and note confidence is reduced.
+3. Counter-trend trades (direction opposite to H1) require very strong reversal signals, reduce confidence score by at least 0.10 vs a follow-trend setup.
+4. The suggested_tp MUST achieve at least ${trendContext.minRR}:1 Risk/Reward ratio from the suggested_sl distance. This is a ${trendContext.isFollowTrend ? 'follow-trend (RR 1:1.5)' : 'counter-trend (RR 1:1.0)'} setup.
+5. Only recommend BUY/SELL if conviction is high after considering all rules above.
+
 **Current Technical Indicators (Multi-timeframe):**
 ${indicatorSummary}
 ${candleContextSection}
@@ -164,14 +174,14 @@ ${candleContextSection}
 ${similarTradesSummary}
 Historical Win Rate from similar setups: ${winRate}%
 
-Based on ALL the above data (indicators + DB candle context + historical trades), provide a JSON response:
+Based on ALL the above data (strategy context + indicators + DB candle context + historical trades), provide a JSON response:
 {
   "recommendation": "BUY" | "SELL" | "WAIT",
   "confidence": 0.0-1.0,
   "suggested_tp": number or null,
   "suggested_sl": number or null,
   "risk_score": 1-10,
-  "analysis": "3-5 sentence analysis referencing specific indicators, price range position, candle bias, and historical patterns"
+  "analysis": "3-5 sentence analysis in Thai: cover H1/H4 trend alignment, 15m entry setup quality, key indicator signals, and why this recommendation was made"
 }
 
 Be conservative with confidence scores. Only recommend BUY/SELL if conviction is high (>0.65).`;

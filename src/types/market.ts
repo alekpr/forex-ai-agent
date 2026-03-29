@@ -40,3 +40,45 @@ export interface MultiTimeframeIndicators {
   '4h'?: IndicatorSnapshot;
   '1d'?: IndicatorSnapshot;
 }
+
+// ─── Trend Analysis Types ─────────────────────────────────────────────────────
+
+export type TrendDirection = 'bullish' | 'bearish' | 'mixed';
+export type MacdMomentum = 'confirming' | 'diverging' | 'neutral';
+export type EntryQuality = 'strong' | 'moderate' | 'weak' | 'not_setup';
+
+export interface EntrySetupQuality {
+  /** Price is within 0.5 × ATR of EMA14 */
+  isPullbackToEMA14: boolean;
+  /** Price is within 1.0 × ATR of EMA60 */
+  isPullbackToEMA60: boolean;
+  /** Which EMA is nearest to price */
+  nearestEMA: 'ema14' | 'ema60' | 'none';
+  /** Distance in ATR units to nearest EMA */
+  atrDistance: number | null;
+  /** MACD histogram direction relative to expected trade direction */
+  macdMomentum: MacdMomentum;
+  /** RSI is in 30-70 zone (not extreme) */
+  rsiNotExtreme: boolean;
+  /** Overall entry quality rating */
+  entryQuality: EntryQuality;
+}
+
+export interface TrendConfluenceResult {
+  /** H1 trend direction (primary) */
+  h1Trend: TrendDirection;
+  /** H4 trend direction (supplementary) */
+  h4Trend: TrendDirection;
+  /** Whether H4 trend aligns with H1 */
+  h4AlignsH1: boolean;
+  /** Whether recommended trade direction follows H1 trend */
+  isFollowTrend: boolean;
+  /** Confidence score adjustment (negative if H4/direction conflicts) */
+  confidenceAdjustment: number;
+  /** Minimum required Risk/Reward ratio (1.5 follow-trend, 1.0 counter-trend) */
+  minRR: number;
+  /** Human-readable summary injected into Claude prompt */
+  confluenceSummary: string;
+  /** Entry-timing analysis on 15m */
+  entrySetup: EntrySetupQuality;
+}
