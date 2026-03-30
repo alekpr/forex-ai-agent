@@ -19,8 +19,9 @@ export class MarketDataService implements IMarketDataAdapter {
   getOHLCCandles(
     symbol: string,
     timeframe: Timeframe,
-    limit = 200
+    limit = 200,
+    beforeTime?: Date
   ): Promise<OHLCCandle[]> {
-    return this.adapter.getOHLCCandles(symbol, timeframe, limit);
+    return this.adapter.getOHLCCandles(symbol, timeframe, limit, beforeTime);
   }
 }
