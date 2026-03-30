@@ -1,14 +1,17 @@
 import cron, { ScheduledTask } from 'node-cron';
 import { AutoAlertAgent } from '../agents/AutoAlertAgent';
+import { CandleRefreshService } from './CandleRefreshService';
 import { env } from '../config/env';
 
 export class SchedulerService {
   private task: ScheduledTask | null = null;
   private readonly agent: AutoAlertAgent;
+  private readonly candleRefresh: CandleRefreshService;
   private currentInterval: number;
 
   constructor() {
     this.agent = new AutoAlertAgent();
+    this.candleRefresh = new CandleRefreshService();
     this.currentInterval = 15; // default 15 minutes
   }
 
@@ -23,9 +26,14 @@ export class SchedulerService {
       throw new Error(`Invalid cron expression for interval ${intervalMinutes} minutes`);
     }
 
+    const symbols = env.CANDLE_SYMBOLS.split(',').map((s) => s.trim()).filter(Boolean);
+
     this.task = cron.schedule(expression, async () => {
-      console.log(`[Scheduler] Running alert scan (every ${intervalMinutes}min)...`);
-      await this.agent.runScan();
+      console.log(`[Scheduler] Running alert scan + candle refresh (every ${intervalMinutes}min)...`);
+      await Promise.all([
+        this.agent.runScan(),
+        this.candleRefresh.refresh(symbols),
+      ]);
     });
 
     console.log(`[Scheduler] Started — scanning every ${intervalMinutes} minutes`);
@@ -45,5 +53,9 @@ export class SchedulerService {
 
   getInterval(): number {
     return this.currentInterval;
+  }
+
+  getCandleRefreshService(): CandleRefreshService {
+    return this.candleRefresh;
   }
 }

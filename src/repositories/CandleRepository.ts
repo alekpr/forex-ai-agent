@@ -72,4 +72,48 @@ export class CandleRepository {
       }))
       .reverse(); // oldest → newest
   }
+
+  async getLatestCandleTime(symbol: string, timeframe: Timeframe): Promise<Date | null> {
+    const result = await query<{ time: Date }>(
+      `SELECT time FROM forex_candles WHERE symbol = $1 AND timeframe = $2 ORDER BY time DESC LIMIT 1`,
+      [symbol, timeframe]
+    );
+    return result.rows[0]?.time ?? null;
+  }
+
+  async aggregateFromFiveMin(symbol: string, targetTf: Timeframe, sinceInterval: string): Promise<number> {
+    const bucketMap: Partial<Record<Timeframe, string>> = {
+      '15m': '15 minutes',
+      '30m': '30 minutes',
+      '1h': '1 hour',
+      '4h': '4 hours',
+      '1d': '1 day',
+    };
+    const bucket = bucketMap[targetTf];
+    if (!bucket) throw new Error(`Cannot aggregate to timeframe: ${targetTf}`);
+
+    const result = await query(
+      `INSERT INTO forex_candles (time, symbol, timeframe, open, high, low, close, volume)
+       SELECT
+         time_bucket($1::interval, time) AS bucket_time,
+         $2,
+         $4,
+         first(open, time),
+         MAX(high),
+         MIN(low),
+         last(close, time),
+         SUM(volume)
+       FROM forex_candles
+       WHERE symbol = $2 AND timeframe = '5m' AND time >= NOW() - $3::interval
+       GROUP BY bucket_time
+       ON CONFLICT (time, symbol, timeframe) DO UPDATE SET
+         open   = EXCLUDED.open,
+         high   = EXCLUDED.high,
+         low    = EXCLUDED.low,
+         close  = EXCLUDED.close,
+         volume = EXCLUDED.volume`,
+      [bucket, symbol, sinceInterval, targetTf]
+    );
+    return (result as unknown as { rowCount: number }).rowCount ?? 0;
+  }
 }

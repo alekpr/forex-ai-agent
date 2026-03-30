@@ -6,6 +6,7 @@ import analyzeRoutes from './routes/analyzeRoutes';
 import alertRoutes, { scheduler } from './routes/alertRoutes';
 import { AlertRepository } from './repositories/AlertRepository';
 import { TelegramBotService } from './telegram/TelegramBotService';
+import { CandleRefreshService } from './services/CandleRefreshService';
 
 const app = express();
 
@@ -45,6 +46,13 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 async function startServer(): Promise<void> {
+  // Initial candle population on startup
+  const symbols = env.CANDLE_SYMBOLS.split(',').map((s) => s.trim()).filter(Boolean);
+  const candleRefresh = new CandleRefreshService();
+  candleRefresh.refresh(symbols).catch((err) =>
+    console.warn('⚠️  Initial candle refresh failed:', (err as Error).message)
+  );
+
   // Auto-start scheduler if alerts are enabled
   const alertRepo = new AlertRepository();
   const settings = await alertRepo.getSettings(env.DEFAULT_USER_ID).catch(() => null);
