@@ -1,6 +1,6 @@
 import { TradeLog } from '../types/trade';
 
-export type ConversationIntent = 'LOG_TRADE' | 'CLOSE_TRADE' | 'ANALYZE';
+export type ConversationIntent = 'LOG_TRADE' | 'CLOSE_TRADE' | 'ANALYZE' | 'SUMMARIZE';
 
 // Fields collected during a multi-turn conversation
 export interface LogTradeData {
@@ -32,7 +32,11 @@ export interface AnalyzeData {
   riskLevel?: 'low' | 'medium' | 'high';
 }
 
-export type CollectedData = LogTradeData | CloseTradeData | AnalyzeData;
+export interface SummarizeData {
+  period: 'today' | 'week' | 'month' | 'last30';
+}
+
+export type CollectedData = LogTradeData | CloseTradeData | AnalyzeData | SummarizeData;
 
 export interface ConversationSession {
   intent: ConversationIntent;

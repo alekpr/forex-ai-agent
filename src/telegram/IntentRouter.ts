@@ -1,10 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env';
-import { ConversationIntent, LogTradeData, CloseTradeData, AnalyzeData } from './ConversationState';
+import { ConversationIntent, LogTradeData, CloseTradeData, AnalyzeData, SummarizeData } from './ConversationState';
 
 export interface RouterResult {
   intent: ConversationIntent;
-  data: LogTradeData | CloseTradeData | AnalyzeData;
+  data: LogTradeData | CloseTradeData | AnalyzeData | SummarizeData;
 }
 
 export interface UnknownResult {
@@ -63,17 +63,33 @@ const TOOLS: Anthropic.Tool[] = [
       required: [],
     },
   },
+  {
+    name: 'summarize',
+    description: 'User wants a summary or analysis of their trading history for a time period. Triggered by: สรุป, ผลการเทรด, ประวัติ, เทรดได้เท่าไหร่, สัปดาห์นี้, อาทิตย์นี้, เดือนนี้, วันนี้, ผลลัพธ์, trade history, summary, weekly, monthly, how did I do, my trades',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        period: {
+          type: 'string',
+          enum: ['today', 'week', 'month', 'last30'],
+          description: 'Time period: today=วันนี้, week=อาทิตย์นี้/สัปดาห์นี้, month=เดือนนี้, last30=30วันล่าสุด. Default to week if unclear.',
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 const SYSTEM_PROMPT = `You are an intent classifier for a Forex trading assistant Telegram bot.
 Your ONLY job is to determine what the user wants and extract any data they provided.
 
-You MUST call exactly one of the three tools: log_trade, close_trade, or analyze.
+You MUST call exactly one of the four tools: log_trade, close_trade, analyze, or summarize.
 - Extract ONLY values the user EXPLICITLY stated in their message. Do NOT infer, guess, assume, or fabricate any field value.
 - If a field was not explicitly mentioned by the user, omit it entirely from the tool call (do not include the key at all).
 - Normalize: ซื้อ→BUY, ขาย→SELL, กำไร/TP hit→WIN, ขาดทุน/SL hit→LOSS, 1hour/1ชม→1h, 4hour/4ชม→4h
 - For log_trade: userReason MUST only be populated if the user clearly stated WHY they are entering the trade (e.g. "เพราะ EMA cross", "because breakout", "RSI oversold"). Price levels and directions alone are NOT a reason.
-- If you CANNOT determine any of the 3 intents, still call analyze with empty fields as a fallback.
+- For summarize: detect period from context — วันนี้/today→today, อาทิตย์/สัปดาห์/week→week, เดือน/month→month, 30วัน/last30→last30. Default to 'week' if unspecified.
+- If you CANNOT determine any of the 4 intents, still call analyze with empty fields as a fallback.
 - NEVER respond with plain text. ALWAYS call a tool.`;
 
 export async function routeMessage(userMessage: string): Promise<RouterResult | UnknownResult> {
@@ -115,6 +131,10 @@ export async function routeMessage(userMessage: string): Promise<RouterResult | 
       return { intent: 'ANALYZE', data: input as AnalyzeData };
     }
 
+    if (toolUse.name === 'summarize') {
+      return { intent: 'SUMMARIZE', data: { period: (input.period as string) ?? 'week' } as SummarizeData };
+    }
+
     return { intent: 'UNKNOWN', reply: helpMessage() };
   } catch (err) {
     console.error('[IntentRouter] Error:', err);
@@ -126,9 +146,10 @@ export async function routeMessage(userMessage: string): Promise<RouterResult | 
 }
 
 function helpMessage(): string {
-  return `👋 *Forex AI Bot* ช่วยได้ 3 อย่าง:\n\n` +
+  return `👋 *Forex AI Bot* ช่วยได้ 4 อย่าง:\n\n` +
     `📝 *บันทึก trade* — พิมพ์เช่น:\n"บันทึก trade EURUSD BUY 1h"\n\n` +
     `🏁 *ปิด trade* — พิมพ์เช่น:\n"ปิด trade"\n\n` +
     `📊 *วิเคราะห์ตลาด* — พิมพ์เช่น:\n"วิเคราะห์ EURUSD 1h"\n\n` +
+    `📈 *สรุปผลการเทรด* — พิมพ์เช่น:\n"สรุปอาทิตย์นี้" หรือ /summary\n\n` +
     `พิมพ์ /cancel เพื่อยกเลิกคำสั่งปัจจุบัน`;
 }

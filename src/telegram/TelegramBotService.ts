@@ -9,11 +9,12 @@ import { CreateTradeLogInput, CloseTradeInput, TradeResult, TradeDirection } fro
 import { Timeframe } from '../types/market';
 import {
   ConversationStateManager,
-  LogTradeData, CloseTradeData, AnalyzeData,
+  LogTradeData, CloseTradeData, AnalyzeData, SummarizeData,
   LOG_TRADE_FIELDS, CLOSE_TRADE_FIELDS, ANALYZE_FIELDS,
 } from './ConversationState';
 import { routeMessage } from './IntentRouter';
-import { formatTradeLogged, formatTradeClosed, formatAnalysis, formatOpenTradeItem } from './formatters';
+import { formatTradeLogged, formatTradeClosed, formatAnalysis, formatOpenTradeItem, formatTradeSummary } from './formatters';
+import { TradeSummaryAgent } from '../agents/TradeSummaryAgent';
 
 export class TelegramBotService {
   private readonly bot: Telegraf<Context<Update>>;
@@ -22,6 +23,7 @@ export class TelegramBotService {
   private readonly tradeAgent: TradeLoggerAgent;
   private readonly analyzeAgent: MarketAnalyzerAgent;
   private readonly tradeRepo: TradeLogRepository;
+  private readonly summaryAgent: TradeSummaryAgent;
 
   constructor() {
     const token = env.TELEGRAM_BOT_TOKEN;
@@ -33,6 +35,7 @@ export class TelegramBotService {
     this.tradeAgent = new TradeLoggerAgent();
     this.analyzeAgent = new MarketAnalyzerAgent();
     this.tradeRepo = new TradeLogRepository();
+    this.summaryAgent = new TradeSummaryAgent();
 
     this.registerHandlers();
   }
@@ -50,12 +53,25 @@ export class TelegramBotService {
       if (!this.isAllowed(ctx)) return;
       await ctx.reply(
         `👋 ยินดีต้อนรับสู่ Forex AI Trading Bot\n\n` +
-        `บอทนี้ช่วยได้ 3 อย่าง:\n` +
+        `บอทนี้ช่วยได้ 4 อย่าง:\n` +
         `📝 บันทึก trade — พิมพ์ เช่น "บันทึก trade EURUSD BUY 1h"\n` +
         `🏁 ปิด trade — พิมพ์ "ปิด trade"\n` +
-        `📊 วิเคราะห์ตลาด — พิมพ์ เช่น "วิเคราะห์ EURUSD 1h"\n\n` +
+        `📊 วิเคราะห์ตลาด — พิมพ์ เช่น "วิเคราะห์ EURUSD 1h"\n` +
+        `📈 สรุปผลการเทรด — พิมพ์ "สรุปอาทิตย์นี้" หรือ /summary\n\n` +
         `พิมพ์ /cancel เพื่อยกเลิกคำสั่งปัจจุบัน`
       );
+    });
+
+    this.bot.command('summary', async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      await ctx.reply('📈 เลือกช่วงเวลาที่ต้องการสรุป:', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📅 วันนี้', callback_data: 'summary_period:today' }, { text: '📆 อาทิตย์นี้', callback_data: 'summary_period:week' }],
+            [{ text: '🗓 เดือนนี้', callback_data: 'summary_period:month' }, { text: '📊 30 วันล่าสุด', callback_data: 'summary_period:last30' }],
+          ],
+        },
+      });
     });
 
     this.bot.command('cancel', async (ctx) => {
@@ -96,6 +112,7 @@ export class TelegramBotService {
         case 'LOG_TRADE':   return this.continueLogTrade(ctx, userId, text);
         case 'CLOSE_TRADE': return this.continueCloseTrade(ctx, userId, text);
         case 'ANALYZE':     return this.continueAnalyze(ctx, userId, text);
+        case 'SUMMARIZE':   return this.executeSummary(ctx, session.collectedData as SummarizeData);
       }
     }
 
@@ -246,6 +263,12 @@ export class TelegramBotService {
     const userId = cbQuery.from.id;
     const callbackData = cbQuery.data;
 
+    if (callbackData.startsWith('summary_period:')) {
+      const period = callbackData.replace('summary_period:', '') as SummarizeData['period'];
+      await this.executeSummary(ctx, { period });
+      return;
+    }
+
     if (!callbackData.startsWith('close_trade:')) return;
 
     const tradeId = callbackData.replace('close_trade:', '');
@@ -275,6 +298,7 @@ export class TelegramBotService {
         case 'LOG_TRADE':   return await this.executeLogTrade(ctx, session.collectedData as LogTradeData);
         case 'CLOSE_TRADE': return await this.executeCloseTrade(ctx, session.collectedData as CloseTradeData);
         case 'ANALYZE':     return await this.executeAnalyze(ctx, session.collectedData as AnalyzeData);
+        case 'SUMMARIZE':   return await this.executeSummary(ctx, session.collectedData as SummarizeData);
       }
     } catch (err) {
       console.error('[TelegramBot] executeAction error:', err);
@@ -337,6 +361,30 @@ export class TelegramBotService {
 
     const msg = formatAnalysis(result);
     await ctx.replyWithMarkdownV2(msg);
+  }
+
+  private async executeSummary(ctx: Context<Update>, data: SummarizeData): Promise<void> {
+    const period = data.period ?? 'week';
+    const periodLabels: Record<string, string> = {
+      today: 'วันนี้', week: 'อาทิตย์นี้', month: 'เดือนนี้', last30: '30 วันล่าสุด',
+    };
+    await ctx.reply(`⏳ กำลังสรุปผลการเทรด ${periodLabels[period]} อาจใช้เวลาสักครู…`);
+
+    try {
+      const result = await this.summaryAgent.summarize(env.DEFAULT_USER_ID, period, periodLabels[period]);
+
+      if (!result.stats.totalTrades) {
+        await ctx.reply(`📢 ไม่พบ trade ที่ปิดแล้วในช่วง ${periodLabels[period]}`);
+        return;
+      }
+
+      const [statsMsg, aiMsg] = formatTradeSummary(periodLabels[period], result.stats, result.aiSummary);
+      await ctx.replyWithMarkdownV2(statsMsg);
+      if (aiMsg) await ctx.replyWithMarkdownV2(aiMsg);
+    } catch (err) {
+      console.error('[TelegramBot] executeSummary error:', err);
+      await ctx.reply('⚠️ เกิดข้อผิดพลาดในการสรุป กรุณาลองใหม่');
+    }
   }
 
   // ─── Field asking ─────────────────────────────────────────────────────────
@@ -410,6 +458,9 @@ export class TelegramBotService {
       return ANALYZE_FIELDS
         .map(f => f.key)
         .filter(k => data[k] === undefined || data[k] === null || data[k] === '') as string[];
+    }
+    if (intent === 'SUMMARIZE') {
+      return []; // execute immediately — no multi-turn needed
     }
     return [];
   }

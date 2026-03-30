@@ -65,6 +65,32 @@ export interface TradeResultRecord {
   createdAt: Date;
 }
 
+export interface ClosedTradeWithResult {
+  id: string;
+  symbol: string;
+  direction: TradeDirection;
+  timeframe: Timeframe;
+  entryPrice: number;
+  tpPrice: number;
+  slPrice: number;
+  entryTime: Date;
+  userReason: string;
+  indicatorsUsed: string[];
+  userAnalysis: string | null;
+  aiMarketComment: string | null;
+  createdAt: Date;
+  // from trade_results
+  result: TradeResult;
+  exitPrice: number;
+  exitTime: Date;
+  pips: number;
+  profitUsd: number;
+  userExitReason: string;
+  userLesson: string | null;
+  aiLesson: string | null;
+  aiPatternTags: string[];
+}
+
 export interface SimilarTrade {
   id: string;
   symbol: string;

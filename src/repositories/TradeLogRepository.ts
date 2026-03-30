@@ -1,5 +1,5 @@
 import { query } from '../db/connection';
-import { TradeLog, CreateTradeLogInput, TradeStatus } from '../types/trade';
+import { TradeLog, CreateTradeLogInput, TradeStatus, ClosedTradeWithResult } from '../types/trade';
 import { MultiTimeframeIndicators, OHLCCandle } from '../types/market';
 
 // Raw DB row (snake_case) returned by SELECT *
@@ -110,5 +110,58 @@ export class TradeLogRepository {
       [userId]
     );
     return result.rows.map(mapRow);
+  }
+
+  async findClosedWithResults(userId: string, since: Date, until: Date): Promise<ClosedTradeWithResult[]> {
+    interface RawRow {
+      id: string; symbol: string; direction: string; timeframe: string;
+      entry_price: string; tp_price: string; sl_price: string; entry_time: Date;
+      user_reason: string; indicators_used: unknown; user_analysis: string | null;
+      ai_market_comment: string | null; created_at: Date;
+      result: string; exit_price: string; exit_time: Date;
+      pips: string; profit_usd: string;
+      user_exit_reason: string; user_lesson: string | null;
+      ai_lesson: string | null; ai_pattern_tags: unknown;
+    }
+    const result = await query<RawRow>(
+      `SELECT
+         tl.id, tl.symbol, tl.direction, tl.timeframe,
+         tl.entry_price, tl.tp_price, tl.sl_price, tl.entry_time,
+         tl.user_reason, tl.indicators_used, tl.user_analysis,
+         tl.ai_market_comment, tl.created_at,
+         tr.result, tr.exit_price, tr.exit_time, tr.pips, tr.profit_usd,
+         tr.user_exit_reason, tr.user_lesson, tr.ai_lesson, tr.ai_pattern_tags
+       FROM trade_logs tl
+       JOIN trade_results tr ON tr.trade_log_id = tl.id
+       WHERE tl.user_id = $1
+         AND tl.entry_time >= $2
+         AND tl.entry_time < $3
+       ORDER BY tl.entry_time DESC`,
+      [userId, since, until]
+    );
+    return result.rows.map((r) => ({
+      id: r.id,
+      symbol: r.symbol,
+      direction: r.direction as ClosedTradeWithResult['direction'],
+      timeframe: r.timeframe as ClosedTradeWithResult['timeframe'],
+      entryPrice: parseFloat(r.entry_price),
+      tpPrice: parseFloat(r.tp_price),
+      slPrice: parseFloat(r.sl_price),
+      entryTime: r.entry_time,
+      userReason: r.user_reason,
+      indicatorsUsed: (r.indicators_used as string[]) ?? [],
+      userAnalysis: r.user_analysis,
+      aiMarketComment: r.ai_market_comment,
+      createdAt: r.created_at,
+      result: r.result as ClosedTradeWithResult['result'],
+      exitPrice: parseFloat(r.exit_price),
+      exitTime: r.exit_time,
+      pips: parseFloat(r.pips),
+      profitUsd: parseFloat(r.profit_usd),
+      userExitReason: r.user_exit_reason,
+      userLesson: r.user_lesson,
+      aiLesson: r.ai_lesson,
+      aiPatternTags: (r.ai_pattern_tags as string[]) ?? [],
+    }));
   }
 }

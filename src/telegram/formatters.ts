@@ -118,3 +118,56 @@ function stripMarkdown(text: string): string {
     .replace(/^\s*[-*+]\s+/gm, '• ')  // bullets
     .trim();
 }
+
+// ─── Trade Summary ────────────────────────────────────────────────────────────
+
+export interface TradeSummaryStats {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  winRate: number;      // percentage 0-100
+  totalPips: number;
+  totalProfitUsd: number;
+  avgPipsPerTrade: number;
+  bestTradePips: number;
+  worstTradePips: number;
+  techniquesUsed: string[];
+}
+
+/**
+ * Returns a tuple [statsMessage, aiMessage] — both are MarkdownV2 strings.
+ * aiMessage may be empty string if aiSummary is empty.
+ */
+export function formatTradeSummary(
+  periodLabel: string,
+  stats: TradeSummaryStats,
+  aiSummary: string,
+): [string, string] {
+  const sign = (n: number) => (n >= 0 ? '+' : '');
+  const winEmoji = stats.winRate >= 60 ? '🟢' : stats.winRate >= 40 ? '🟡' : '🔴';
+
+  const lines = [
+    `📈 *สรุปผลการเทรด — ${escapeRaw(periodLabel)}*`,
+    ``,
+    `${winEmoji} *Win Rate:* ${escape(stats.winRate.toFixed(1))}%`,
+    `📊 *Trades:* ${escape(stats.totalTrades)} \\(✅ ${escape(stats.wins)} W / ❌ ${escape(stats.losses)} L / ➖ ${escape(stats.breakevens)} BE\\)`,
+    `💰 *Total Pips:* ${escape(sign(stats.totalPips) + stats.totalPips.toFixed(1))}`,
+    `💵 *Profit USD:* ${escape(sign(stats.totalProfitUsd) + stats.totalProfitUsd.toFixed(2))}`,
+    `📐 *Avg Pips/Trade:* ${escape(sign(stats.avgPipsPerTrade) + stats.avgPipsPerTrade.toFixed(1))}`,
+    `🏆 *Best Trade:* ${escape(sign(stats.bestTradePips) + stats.bestTradePips.toFixed(1))} pips`,
+    `📉 *Worst Trade:* ${escape(sign(stats.worstTradePips) + stats.worstTradePips.toFixed(1))} pips`,
+  ];
+
+  if (stats.techniquesUsed.length) {
+    lines.push(`🛠 *Techniques:* ${escape(stats.techniquesUsed.slice(0, 5).join(', '))}`);
+  }
+
+  const statsMsg = lines.join('\n');
+
+  const aiMsg = aiSummary
+    ? `🤖 *AI วิเคราะห์*\n\n${escapeRaw(stripMarkdown(aiSummary))}`
+    : '';
+
+  return [statsMsg, aiMsg];
+}
