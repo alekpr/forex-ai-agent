@@ -96,15 +96,15 @@ export class CandleRepository {
       `INSERT INTO forex_candles (time, symbol, timeframe, open, high, low, close, volume)
        SELECT
          time_bucket($1::interval, time) AS bucket_time,
-         $2,
-         $4,
+         $2::text,
+         $4::text,
          first(open, time),
          MAX(high),
          MIN(low),
          last(close, time),
          SUM(volume)
        FROM forex_candles
-       WHERE symbol = $2 AND timeframe = '5m' AND time >= NOW() - $3::interval
+       WHERE symbol = $2::text AND timeframe = '5m' AND time >= NOW() - $3::interval
        GROUP BY bucket_time
        ON CONFLICT (time, symbol, timeframe) DO UPDATE SET
          open   = EXCLUDED.open,
