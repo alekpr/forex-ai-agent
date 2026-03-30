@@ -39,6 +39,7 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
+        tradeId:        { type: 'string', description: 'Trade UUID if the user explicitly provides it in their message (e.g. 12dc9bd3-e819-4127-abed-bcf4549f56b2)' },
         result:         { type: 'string', enum: ['WIN', 'LOSS', 'BREAKEVEN'], description: 'Trade result. กำไร/ได้กำไร=WIN, ขาดทุน/เสีย=LOSS' },
         exitPrice:      { type: 'number', description: 'Exit price' },
         pips:           { type: 'number', description: 'Pips gained (positive) or lost (negative)' },

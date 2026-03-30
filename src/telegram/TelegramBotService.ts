@@ -362,8 +362,14 @@ export class TelegramBotService {
         .filter(k => data[k] === undefined || data[k] === null || data[k] === '') as string[];
     }
     if (intent === 'CLOSE_TRADE') {
-      // tradeId is resolved via inline keyboard, not text input
-      return [] as string[]; // will show keyboard first
+      // If tradeId not yet known, return a sentinel to trigger the inline keyboard
+      if (!data['tradeId']) {
+        return ['_select_trade'];
+      }
+      // tradeId is known — return any missing close fields
+      return CLOSE_TRADE_FIELDS
+        .map(f => f.key)
+        .filter(k => data[k] === undefined || data[k] === null || data[k] === '') as string[];
     }
     if (intent === 'ANALYZE') {
       return ANALYZE_FIELDS
