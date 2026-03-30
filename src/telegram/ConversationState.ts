@@ -101,7 +101,7 @@ export const LOG_TRADE_FIELDS: { key: keyof LogTradeData; question: string }[] =
   { key: 'entryPrice', question: '💰 *ราคาเปิด (Entry price)?*' },
   { key: 'tpPrice',    question: '🎯 *ราคา Take Profit (TP)?*' },
   { key: 'slPrice',    question: '🛑 *ราคา Stop Loss (SL)?*' },
-  { key: 'userReason', question: '📝 *เหตุผลที่เข้า trade?\n*(เช่น EMA cross, RSI oversold, breakout pattern)*' },
+  { key: 'userReason', question: '📝 *เหตุผลที่เข้า trade?*\n(เช่น EMA cross, RSI oversold, breakout pattern)' },
 ];
 
 export const CLOSE_TRADE_FIELDS: { key: keyof CloseTradeData; question: string }[] = [
