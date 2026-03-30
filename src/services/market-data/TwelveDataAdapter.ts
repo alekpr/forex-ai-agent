@@ -53,21 +53,27 @@ export class TwelveDataAdapter implements IMarketDataAdapter {
   async getOHLCCandles(
     symbol: string,
     timeframe: Timeframe,
-    limit = 200
+    limit = 200,
+    beforeTime?: Date
   ): Promise<OHLCCandle[]> {
     const interval = TF_MAP[timeframe];
     const formattedSymbol = this.formatSymbol(symbol);
 
+    const params: Record<string, string | number> = {
+      symbol: formattedSymbol,
+      interval,
+      outputsize: limit,
+      apikey: this.apiKey,
+    };
+
+    if (beforeTime) {
+      // TwelveData expects "YYYY-MM-DD HH:MM:SS"
+      params.end_date = beforeTime.toISOString().replace('T', ' ').slice(0, 19);
+    }
+
     const response = await axios.get<TwelveDataResponse>(
       `${this.baseUrl}/time_series`,
-      {
-        params: {
-          symbol: formattedSymbol,
-          interval,
-          outputsize: limit,
-          apikey: this.apiKey,
-        },
-      }
+      { params }
     );
 
     const data = response.data;

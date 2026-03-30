@@ -15,6 +15,7 @@ import {
 import { routeMessage } from './IntentRouter';
 import { formatTradeLogged, formatTradeClosed, formatAnalysis, formatOpenTradeItem, formatTradeSummary } from './formatters';
 import { TradeSummaryAgent } from '../agents/TradeSummaryAgent';
+import { parseEntryTime } from '../utils/dateParser';
 
 export class TelegramBotService {
   private readonly bot: Telegraf<Context<Update>>;
@@ -309,6 +310,15 @@ export class TelegramBotService {
   private async executeLogTrade(ctx: Context<Update>, data: LogTradeData): Promise<void> {
     await ctx.reply('⏳ กำลังบันทึก trade และดึงข้อมูลตลาด...');
 
+    const parsedEntryTime = parseEntryTime(data.entryTime) ?? new Date();
+    const isBackdated = Date.now() - parsedEntryTime.getTime() > 10 * 60 * 1000;
+    if (isBackdated) {
+      await ctx.reply(
+        `⏮️ บันทึก trade ย้อนหลัง: ${parsedEntryTime.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}
+⏳ กำลังดึง indicators ณ เวลานั้น...`
+      );
+    }
+
     const input: CreateTradeLogInput = {
       symbol: data.symbol!.toUpperCase(),
       direction: data.direction! as TradeDirection,
@@ -316,7 +326,7 @@ export class TelegramBotService {
       entryPrice: data.entryPrice!,
       tpPrice: data.tpPrice!,
       slPrice: data.slPrice!,
-      entryTime: data.entryTime ? new Date(data.entryTime) : new Date(),
+      entryTime: parsedEntryTime,
       userReason: data.userReason!,
       indicatorsUsed: data.indicatorsUsed ?? [],
       userAnalysis: data.userAnalysis,
@@ -491,6 +501,10 @@ export class TelegramBotService {
       case 'slPrice': {
         const n = parseFloat(t);
         return isNaN(n) ? null : n;
+      }
+      case 'entryTime': {
+        const parsed = parseEntryTime(t);
+        return parsed ? parsed.toISOString() : null;
       }
       case 'userReason':
       case 'userAnalysis':

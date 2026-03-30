@@ -36,13 +36,31 @@ export class CandleService {
   /**
    * Get OHLC candles — DB first, API fallback.
    * Returns candles oldest→newest.
+   * When `asOf` is provided, fetches historical candles ending at that timestamp.
    */
   async getCandles(
     symbol: string,
     timeframe: Timeframe,
-    limit = 250
+    limit = 250,
+    asOf?: Date
   ): Promise<{ candles: OHLCCandle[]; source: 'db' | 'api' }> {
-    // 1. Try DB first
+    // Historical mode (backdated trade)
+    if (asOf) {
+      const dbCandles = await this.candleRepo.getCandlesUpTo(symbol, timeframe, asOf, limit);
+      if (dbCandles.length >= MIN_CANDLES) {
+        console.log(`[CandleService] ${symbol} ${timeframe}: DB historical hit (${dbCandles.length} candles, asOf: ${asOf.toISOString()})`);
+        return { candles: dbCandles, source: 'db' };
+      }
+      console.log(`[CandleService] ${symbol} ${timeframe}: DB historical insufficient (${dbCandles.length}/${MIN_CANDLES}) → API`);
+      const apiCandles = await this.marketData.getOHLCCandles(symbol, timeframe, limit, asOf);
+      if (apiCandles.length > 0) {
+        await this.candleRepo.upsertCandles(apiCandles);
+      }
+      const best = apiCandles.length >= dbCandles.length ? apiCandles : dbCandles;
+      return { candles: best, source: apiCandles.length > 0 ? 'api' : 'db' };
+    }
+
+    // Real-time mode (existing logic)
     const dbCandles = await this.candleRepo.getLatestCandles(symbol, timeframe, limit);
 
     if (dbCandles.length >= MIN_CANDLES) {
@@ -79,18 +97,20 @@ export class CandleService {
   /**
    * Fetch all 4 timeframes concurrently — DB first per TF.
    * Returns map of TF → candles, and per-TF source info.
+   * When `asOf` is provided, fetches historical candles ending at that timestamp.
    */
   async getMultiTimeframeCandles(
     symbol: string,
     timeframes: Timeframe[],
-    limit = 250
+    limit = 250,
+    asOf?: Date
   ): Promise<{
     candlesByTf: Partial<Record<Timeframe, OHLCCandle[]>>;
     sourcesByTf: Partial<Record<Timeframe, 'db' | 'api'>>;
   }> {
     const results = await Promise.all(
       timeframes.map(async (tf) => {
-        const { candles, source } = await this.getCandles(symbol, tf, limit);
+        const { candles, source } = await this.getCandles(symbol, tf, limit, asOf);
         return { tf, candles, source };
       })
     );

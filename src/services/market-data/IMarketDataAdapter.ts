@@ -4,6 +4,7 @@ export interface IMarketDataAdapter {
   getOHLCCandles(
     symbol: string,
     timeframe: Timeframe,
-    limit?: number
+    limit?: number,
+    beforeTime?: Date
   ): Promise<OHLCCandle[]>;
 }

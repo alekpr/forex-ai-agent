@@ -11,6 +11,8 @@ import { OHLCCandle, Timeframe, MultiTimeframeIndicators } from '../types/market
 import { TradeLoggerResponse } from '../types/agent';
 
 const TIMEFRAMES: Timeframe[] = ['5m', '15m', '1h', '4h'];
+/** Trades older than this threshold use historical candles for indicator computation */
+const BACKDATE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
 export class TradeLoggerAgent {
   private readonly candleSvc: CandleService;
@@ -37,11 +39,19 @@ export class TradeLoggerAgent {
    */
   async logTrade(input: CreateTradeLogInput): Promise<TradeLoggerResponse> {
     try {
+      // Detect backdated trade — use historical candles if entry was > 10 min ago
+      const isBackdated = Date.now() - input.entryTime.getTime() > BACKDATE_THRESHOLD_MS;
+      const asOf = isBackdated ? input.entryTime : undefined;
+      if (isBackdated) {
+        console.log(`[TradeLoggerAgent] Backdated trade: entryTime=${input.entryTime.toISOString()}, fetching historical candles`);
+      }
+
       // Step 2: Fetch candles for all timeframes (DB first, API fallback)
       const { candlesByTf, sourcesByTf } = await this.candleSvc.getMultiTimeframeCandles(
         input.symbol,
         TIMEFRAMES,
-        250
+        250,
+        asOf
       );
       console.log(`[TradeLoggerAgent] Candle sources for ${input.symbol}:`, sourcesByTf);
 
@@ -82,7 +92,7 @@ export class TradeLoggerAgent {
 
       return {
         success: true,
-        message: 'Trade logged successfully',
+        message: isBackdated ? 'Trade logged (backdated)' : 'Trade logged successfully',
         data: {
           tradeId: tradeLog.id,
           aiMarketComment,

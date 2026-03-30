@@ -27,6 +27,7 @@ const TOOLS: Anthropic.Tool[] = [
         entryPrice:  { type: 'number', description: 'Entry price' },
         tpPrice:     { type: 'number', description: 'Take profit price' },
         slPrice:     { type: 'number', description: 'Stop loss price' },
+        entryTime:   { type: 'string', description: 'Entry time as ISO 8601 string (e.g. 2026-03-29T14:00:00+07:00). Extract ONLY if user explicitly states a past time such as "เมื่อวาน 14:00", "2h ago", "29/03 10:00", "เช้านี้ 9:30". Do NOT populate for real-time trades.' },
         userReason:  { type: 'string', description: 'Reason for entering the trade' },
         userAnalysis:{ type: 'string', description: 'Optional extra market analysis from user' },
       },

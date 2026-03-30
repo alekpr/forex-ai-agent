@@ -81,6 +81,41 @@ export class CandleRepository {
     return result.rows[0]?.time ?? null;
   }
 
+  /**
+   * Fetch up to `limit` candles ending at or before `beforeTime`, oldest→newest.
+   * Used for backdated trade analysis.
+   */
+  async getCandlesUpTo(
+    symbol: string,
+    timeframe: Timeframe,
+    beforeTime: Date,
+    limit = 250
+  ): Promise<OHLCCandle[]> {
+    const result = await query<{
+      time: Date; symbol: string; timeframe: string;
+      open: string; high: string; low: string; close: string; volume: string;
+    }>(
+      `SELECT time, symbol, timeframe, open, high, low, close, volume
+       FROM forex_candles
+       WHERE symbol = $1 AND timeframe = $2 AND time <= $3
+       ORDER BY time DESC
+       LIMIT $4`,
+      [symbol, timeframe, beforeTime, limit]
+    );
+    return result.rows
+      .map((r) => ({
+        time: r.time,
+        symbol: r.symbol,
+        timeframe: r.timeframe as Timeframe,
+        open: parseFloat(r.open),
+        high: parseFloat(r.high),
+        low: parseFloat(r.low),
+        close: parseFloat(r.close),
+        volume: parseInt(r.volume, 10),
+      }))
+      .reverse(); // oldest → newest
+  }
+
   async aggregateFromFiveMin(symbol: string, targetTf: Timeframe, sinceInterval: string): Promise<number> {
     const bucketMap: Partial<Record<Timeframe, string>> = {
       '15m': '15 minutes',

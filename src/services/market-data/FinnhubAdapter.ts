@@ -38,10 +38,13 @@ export class FinnhubAdapter implements IMarketDataAdapter {
   async getOHLCCandles(
     symbol: string,
     timeframe: Timeframe,
-    limit = 200
+    limit = 200,
+    beforeTime?: Date
   ): Promise<OHLCCandle[]> {
     const resolution = TF_MAP[timeframe];
-    const toTs = Math.floor(Date.now() / 1000);
+    const toTs = beforeTime
+      ? Math.floor(beforeTime.getTime() / 1000)
+      : Math.floor(Date.now() / 1000);
     // Rough back-calculation: get enough history for 'limit' candles
     const minutesPerCandle: Record<string, number> = {
       '5': 5, '15': 15, '60': 60, '240': 240, 'D': 1440,
