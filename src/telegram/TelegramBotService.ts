@@ -111,10 +111,17 @@ export class TelegramBotService {
     // Determine pendingFields = fields not yet extracted by Claude
     const pendingFields = this.computePendingFields(result.intent, result.data as Record<string, unknown>);
 
+    // For CLOSE_TRADE: if Claude already extracted a tradeId, load snapshot now
+    let tradeSnapshot = undefined;
+    if (result.intent === 'CLOSE_TRADE' && (result.data as CloseTradeData).tradeId) {
+      tradeSnapshot = await this.tradeRepo.findById((result.data as CloseTradeData).tradeId!).catch(() => null) ?? undefined;
+    }
+
     this.state.set(userId, {
       intent: result.intent,
       collectedData: result.data,
       pendingFields,
+      tradeSnapshot,
       lastActivity: Date.now(),
     });
 
@@ -164,14 +171,39 @@ export class TelegramBotService {
     }
 
     const fieldKey = session.pendingFields[0] as keyof CloseTradeData;
-    const parsed = this.parseCloseTradeField(fieldKey, text);
+
+    // Resolve "TP" / "SL" keywords to actual prices from the trade snapshot
+    let resolvedText = text;
+    if (fieldKey === 'exitPrice') {
+      const snap = session.tradeSnapshot;
+      const upper = text.trim().toUpperCase();
+      if (upper === 'TP' && snap?.tpPrice) resolvedText = String(snap.tpPrice);
+      else if (upper === 'SL' && snap?.slPrice) resolvedText = String(snap.slPrice);
+    }
+
+    const parsed = this.parseCloseTradeField(fieldKey, resolvedText);
     if (parsed === null) {
       await ctx.reply(`❌ ค่าไม่ถูกต้อง กรุณากรอกใหม่`);
       return;
     }
 
     (data as Record<string, unknown>)[fieldKey] = parsed;
-    const remaining = session.pendingFields.slice(1);
+    let remaining = session.pendingFields.slice(1);
+
+    // After exitPrice is set, auto-calculate pips and profitUsd from the trade snapshot
+    if (fieldKey === 'exitPrice') {
+      const snap = session.tradeSnapshot;
+      if (snap) {
+        const exitPrice = parsed as number;
+        const pipMultiplier = snap.symbol.includes('JPY') ? 100 : 10000;
+        const rawPips = (exitPrice - snap.entryPrice) * pipMultiplier;
+        const pips = snap.direction === 'BUY' ? rawPips : -rawPips;
+        data.pips = Math.round(pips * 10) / 10;
+        data.profitUsd = Math.round(pips * 1) / 10; // approximate; no lot size known
+        await ctx.reply(`🧮 คำนวณอัตโนมัติ: ${pips >= 0 ? '+' : ''}${data.pips} pips`);
+      }
+    }
+
     this.state.update(userId, { collectedData: data, pendingFields: remaining });
 
     if (remaining.length === 0) {
@@ -223,8 +255,11 @@ export class TelegramBotService {
     const data = session.collectedData as CloseTradeData;
     data.tradeId = tradeId;
 
+    // Load trade snapshot for TP/SL resolution and auto-calc
+    const tradeSnapshot = await this.tradeRepo.findById(tradeId).catch(() => null);
+
     const pendingFields = CLOSE_TRADE_FIELDS.map(f => f.key as string);
-    this.state.update(userId, { collectedData: data, pendingFields });
+    this.state.update(userId, { collectedData: data, pendingFields, tradeSnapshot: tradeSnapshot ?? undefined });
 
     await this.askNextField(ctx, userId);
   }
@@ -275,9 +310,9 @@ export class TelegramBotService {
       result: data.result! as TradeResult,
       exitPrice: data.exitPrice!,
       exitTime: new Date(),
-      pips: data.pips!,
-      profitUsd: data.profitUsd!,
-      userExitReason: data.userExitReason!,
+      pips: data.pips ?? 0,
+      profitUsd: data.profitUsd ?? 0,
+      userExitReason: data.userExitReason ?? '',
       userLesson: data.userLesson,
     };
 

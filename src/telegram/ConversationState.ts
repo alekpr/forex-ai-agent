@@ -42,6 +42,8 @@ export interface ConversationSession {
   collectedData: CollectedData;
   // Snapshot of open trades shown in inline keyboard (CLOSE_TRADE only)
   openTrades?: TradeLog[];
+  // The specific open trade being closed (for TP/SL resolution and auto-calc)
+  tradeSnapshot?: TradeLog;
   lastActivity: number; // Date.now()
 }
 
@@ -105,10 +107,8 @@ export const LOG_TRADE_FIELDS: { key: keyof LogTradeData; question: string }[] =
 ];
 
 export const CLOSE_TRADE_FIELDS: { key: keyof CloseTradeData; question: string }[] = [
-  { key: 'result',        question: '🏁 *ผลการเทรด?*\nตอบ: WIN / LOSS / BREAKEVEN' },
-  { key: 'exitPrice',     question: '💰 *ราคาปิด (Exit price)?*' },
-  { key: 'pips',          question: '📊 *ได้/เสียกี่ pips?*\n(ใส่เลขติดลบถ้าขาดทุน เช่น -25)' },
-  { key: 'profitUsd',     question: '💵 *กำไร/ขาดทุนเป็น USD?*\n(ใส่เลขติดลบถ้าขาดทุน)' },
+  { key: 'result',         question: '🏁 *ผลการเทรด?*\nตอบ: WIN / LOSS / BREAKEVEN' },
+  { key: 'exitPrice',      question: '💰 *ราคาปิด?*\n(พิมพ์ราคา หรือ TP / SL เพื่อใช้ราคาเป้าหมาย)' },
   { key: 'userExitReason', question: '📝 *เหตุผลที่ปิด trade?*' },
 ];
 
