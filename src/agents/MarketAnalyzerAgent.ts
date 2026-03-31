@@ -44,9 +44,9 @@ export class MarketAnalyzerAgent {
     try {
       const { symbol, timeframe, riskLevel = 'medium' } = request;
 
-      // Step 1: Fetch candles (DB first, API fallback) + build candle context from DB
+      // Step 1: Fetch candles (always fresh from API for live analysis) + build candle context from DB
       const [{ candlesByTf, sourcesByTf }, candleContext] = await Promise.all([
-        this.candleSvc.getMultiTimeframeCandles(symbol, TIMEFRAMES, 250),
+        this.candleSvc.getMultiTimeframeCandles(symbol, TIMEFRAMES, 250, undefined, true),
         this.candleSvc.buildCandleContext(symbol, timeframe, 50),
       ]);
       console.log(`[MarketAnalyzerAgent] Candle sources for ${symbol}:`, sourcesByTf);

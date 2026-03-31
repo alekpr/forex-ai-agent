@@ -11,14 +11,14 @@ import { OHLCCandle, Timeframe } from '../types/market';
 import { MarketDataService } from './market-data/MarketDataService';
 import { CandleRepository } from '../repositories/CandleRepository';
 
-/** Staleness threshold (ms) per timeframe — how old the newest candle can be */
+/** Staleness threshold (ms) per timeframe — 1 candle period; if newest candle is older than this, a new completed candle likely exists */
 const STALE_THRESHOLD_MS: Record<Timeframe, number> = {
-  '5m':  10 * 60 * 1000,   // 10 minutes
-  '15m': 30 * 60 * 1000,   // 30 minutes
-  '30m': 60 * 60 * 1000,   // 1 hour
-  '1h':  2 * 60 * 60 * 1000,  // 2 hours
-  '4h':  8 * 60 * 60 * 1000,  // 8 hours
-  '1d':  26 * 60 * 60 * 1000, // 26 hours (covers weekend)
+  '5m':  5 * 60 * 1000,        // 5 minutes  (1 candle)
+  '15m': 15 * 60 * 1000,       // 15 minutes (1 candle)
+  '30m': 30 * 60 * 1000,       // 30 minutes (1 candle)
+  '1h':  60 * 60 * 1000,       // 1 hour     (1 candle)
+  '4h':  4 * 60 * 60 * 1000,   // 4 hours    (1 candle)
+  '1d':  26 * 60 * 60 * 1000,  // 26 hours   (covers weekend gap)
 };
 
 /** Minimum candles needed to compute all indicators reliably (EMA200 needs 200) */
@@ -37,12 +37,14 @@ export class CandleService {
    * Get OHLC candles — DB first, API fallback.
    * Returns candles oldest→newest.
    * When `asOf` is provided, fetches historical candles ending at that timestamp.
+   * When `forceRefresh` is true, always fetches from API (for live analysis).
    */
   async getCandles(
     symbol: string,
     timeframe: Timeframe,
     limit = 250,
-    asOf?: Date
+    asOf?: Date,
+    forceRefresh = false
   ): Promise<{ candles: OHLCCandle[]; source: 'db' | 'api' }> {
     // Historical mode (backdated trade)
     if (asOf) {
@@ -61,27 +63,32 @@ export class CandleService {
     }
 
     // Real-time mode (existing logic)
-    const dbCandles = await this.candleRepo.getLatestCandles(symbol, timeframe, limit);
+    // forceRefresh: skip DB cache and always fetch from API
+    if (!forceRefresh) {
+      const dbCandles = await this.candleRepo.getLatestCandles(symbol, timeframe, limit);
 
-    if (dbCandles.length >= MIN_CANDLES) {
-      const newest = dbCandles[dbCandles.length - 1].time;
-      const ageMs = Date.now() - newest.getTime();
-      const threshold = STALE_THRESHOLD_MS[timeframe];
+      if (dbCandles.length >= MIN_CANDLES) {
+        const newest = dbCandles[dbCandles.length - 1].time;
+        const ageMs = Date.now() - newest.getTime();
+        const threshold = STALE_THRESHOLD_MS[timeframe];
 
-      if (ageMs <= threshold) {
+        if (ageMs <= threshold) {
+          console.log(
+            `[CandleService] ${symbol} ${timeframe}: DB hit (${dbCandles.length} candles, age: ${Math.round(ageMs / 60000)}min)`
+          );
+          return { candles: dbCandles, source: 'db' };
+        }
+
         console.log(
-          `[CandleService] ${symbol} ${timeframe}: DB hit (${dbCandles.length} candles, age: ${Math.round(ageMs / 60000)}min)`
+          `[CandleService] ${symbol} ${timeframe}: DB stale (age: ${Math.round(ageMs / 60000)}min > threshold: ${threshold / 60000}min) → fetching API`
         );
-        return { candles: dbCandles, source: 'db' };
+      } else {
+        console.log(
+          `[CandleService] ${symbol} ${timeframe}: DB insufficient (${dbCandles.length}/${MIN_CANDLES}) → fetching API`
+        );
       }
-
-      console.log(
-        `[CandleService] ${symbol} ${timeframe}: DB stale (age: ${Math.round(ageMs / 60000)}min > threshold: ${threshold / 60000}min) → fetching API`
-      );
     } else {
-      console.log(
-        `[CandleService] ${symbol} ${timeframe}: DB insufficient (${dbCandles.length}/${MIN_CANDLES}) → fetching API`
-      );
+      console.log(`[CandleService] ${symbol} ${timeframe}: forceRefresh → fetching API`);
     }
 
     // 2. Fallback to API
@@ -98,19 +105,21 @@ export class CandleService {
    * Fetch all 4 timeframes concurrently — DB first per TF.
    * Returns map of TF → candles, and per-TF source info.
    * When `asOf` is provided, fetches historical candles ending at that timestamp.
+   * When `forceRefresh` is true, always fetches fresh from API (for live analysis).
    */
   async getMultiTimeframeCandles(
     symbol: string,
     timeframes: Timeframe[],
     limit = 250,
-    asOf?: Date
+    asOf?: Date,
+    forceRefresh = false
   ): Promise<{
     candlesByTf: Partial<Record<Timeframe, OHLCCandle[]>>;
     sourcesByTf: Partial<Record<Timeframe, 'db' | 'api'>>;
   }> {
     const results = await Promise.all(
       timeframes.map(async (tf) => {
-        const { candles, source } = await this.getCandles(symbol, tf, limit, asOf);
+        const { candles, source } = await this.getCandles(symbol, tf, limit, asOf, forceRefresh);
         return { tf, candles, source };
       })
     );
