@@ -264,6 +264,24 @@ export class TelegramBotService {
     const userId = cbQuery.from.id;
     const callbackData = cbQuery.data;
 
+    if (callbackData.startsWith('close_result:')) {
+      const tradeResult = callbackData.replace('close_result:', '') as 'WIN' | 'LOSS' | 'BREAKEVEN';
+      const session = this.state.get(userId);
+      if (!session || session.intent !== 'CLOSE_TRADE') return;
+
+      const data = session.collectedData as CloseTradeData;
+      data.result = tradeResult;
+      const remaining = session.pendingFields.filter(f => f !== 'result');
+      this.state.update(userId, { collectedData: data, pendingFields: remaining });
+
+      if (remaining.length === 0) {
+        await this.executeAction(ctx, userId);
+      } else {
+        await this.askNextField(ctx, userId);
+      }
+      return;
+    }
+
     if (callbackData.startsWith('summary_period:')) {
       const period = callbackData.replace('summary_period:', '') as SummarizeData['period'];
       await this.executeSummary(ctx, { period });
@@ -407,8 +425,12 @@ export class TelegramBotService {
     if (session.intent === 'LOG_TRADE') {
       question = LOG_TRADE_FIELDS.find(f => f.key === fieldKey)?.question;
     } else if (session.intent === 'CLOSE_TRADE') {
-      if (!( session.collectedData as CloseTradeData).tradeId) {
+      if (!(session.collectedData as CloseTradeData).tradeId) {
         return this.showOpenTradesKeyboard(ctx, userId);
+      }
+      // Show inline keyboard for result field instead of free-text
+      if (fieldKey === 'result') {
+        return this.showTradeResultKeyboard(ctx);
       }
       question = CLOSE_TRADE_FIELDS.find(f => f.key === fieldKey)?.question;
     } else if (session.intent === 'ANALYZE') {
@@ -418,6 +440,18 @@ export class TelegramBotService {
     if (question) {
       await ctx.reply(question, { parse_mode: 'Markdown' });
     }
+  }
+
+  private async showTradeResultKeyboard(ctx: Context<Update>): Promise<void> {
+    await ctx.reply('🏆 ผลการเทรดเป็นอะไร?', {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ WIN (กำไร)', callback_data: 'close_result:WIN' },
+          { text: '❌ LOSS (ขาดทุน)', callback_data: 'close_result:LOSS' },
+          { text: '➖ BREAKEVEN (เท่าทุน)', callback_data: 'close_result:BREAKEVEN' },
+        ]],
+      },
+    });
   }
 
   private async showOpenTradesKeyboard(ctx: Context<Update>, userId: number): Promise<void> {
