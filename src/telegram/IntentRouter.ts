@@ -81,24 +81,37 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-const SYSTEM_PROMPT = `You are an intent classifier for a Forex trading assistant Telegram bot.
-Your ONLY job is to determine what the user wants and extract any data they provided.
+function buildSystemPrompt(): string {
+  const now = new Date();
+  // Format as ISO 8601 in Bangkok timezone using sv-SE locale (outputs YYYY-MM-DD HH:MM:SS)
+  const bangkokIso = now.toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok', hour12: false })
+    .replace(' ', 'T') + '+07:00';
+  const bangkokDate = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }); // YYYY-MM-DD
 
-You MUST call exactly one of the four tools: log_trade, close_trade, analyze, or summarize.
-- Extract ONLY values the user EXPLICITLY stated in their message. Do NOT infer, guess, assume, or fabricate any field value.
-- If a field was not explicitly mentioned by the user, omit it entirely from the tool call (do not include the key at all).
-- Normalize: ซื้อ→BUY, ขาย→SELL, กำไร/TP hit→WIN, ขาดทุน/SL hit→LOSS, 1hour/1ชม→1h, 4hour/4ชม→4h
-- For log_trade: userReason MUST only be populated if the user clearly stated WHY they are entering the trade (e.g. "เพราะ EMA cross", "because breakout", "RSI oversold"). Price levels and directions alone are NOT a reason.
-- For summarize: detect period from context — วันนี้/today→today, อาทิตย์/สัปดาห์/week→week, เดือน/month→month, 30วัน/last30→last30. Default to 'week' if unspecified.
-- If you CANNOT determine any of the 4 intents, still call analyze with empty fields as a fallback.
-- NEVER respond with plain text. ALWAYS call a tool.`;
+  return [
+    'You are an intent classifier for a Forex trading assistant Telegram bot.',
+    'Your ONLY job is to determine what the user wants and extract any data they provided.',
+    '',
+    `Current date/time (Bangkok, UTC+7): ${bangkokIso} — use this as "today" for all date calculations.`,
+    '',
+    'You MUST call exactly one of the four tools: log_trade, close_trade, analyze, or summarize.',
+    '- Extract ONLY values the user EXPLICITLY stated in their message. Do NOT infer, guess, assume, or fabricate any field value.',
+    '- If a field was not explicitly mentioned by the user, omit it entirely from the tool call (do not include the key at all).',
+    '- Normalize: ซื้อ→BUY, ขาย→SELL, กำไร/TP hit→WIN, ขาดทุน/SL hit→LOSS, 1hour/1ชม→1h, 4hour/4ชม→4h',
+    '- For log_trade: userReason MUST only be populated if the user clearly stated WHY they are entering the trade (e.g. "เพราะ EMA cross", "because breakout", "RSI oversold"). Price levels and directions alone are NOT a reason.',
+    `- For log_trade entryTime: if user provides only a time (e.g. "11:55", "09:30"), combine it with TODAY ${bangkokDate} to produce a full ISO 8601 string like ${bangkokDate}T11:55:00+07:00. NEVER use a past date from training data.`,
+    '- For summarize: detect period from context — วันนี้/today→today, อาทิตย์/สัปดาห์/week→week, เดือน/month→month, 30วัน/last30→last30. Default to \'week\' if unspecified.',
+    '- If you CANNOT determine any of the 4 intents, still call analyze with empty fields as a fallback.',
+    '- NEVER respond with plain text. ALWAYS call a tool.',
+  ].join('\n');
+}
 
 export async function routeMessage(userMessage: string): Promise<RouterResult | UnknownResult> {
   try {
     const response = await client.messages.create({
       model: env.CLAUDE_MODEL,
       max_tokens: 512,
-      system: SYSTEM_PROMPT,
+      system: buildSystemPrompt(),
       tools: TOOLS,
       tool_choice: { type: 'any' },
       messages: [{ role: 'user', content: userMessage }],
