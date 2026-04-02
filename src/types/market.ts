@@ -65,20 +65,20 @@ export interface EntrySetupQuality {
 }
 
 export interface TrendConfluenceResult {
-  /** H1 trend direction (primary) */
-  h1Trend: TrendDirection;
-  /** H4 trend direction (supplementary) */
-  h4Trend: TrendDirection;
-  /** Whether H4 trend aligns with H1 */
-  h4AlignsH1: boolean;
-  /** Whether recommended trade direction follows H1 trend */
+  /** Primary TF trend direction — 1H for 15m analysis, 15M for 5m analysis */
+  primaryTrend: TrendDirection;
+  /** Macro TF trend direction — controls overall BUY/SELL bias (4H for 15m, 1H for 5m) */
+  macroTrend: TrendDirection;
+  /** Whether macro trend aligns with primary trend */
+  macroAlignsPrimary: boolean;
+  /** Whether recommended trade direction follows the primary trend */
   isFollowTrend: boolean;
-  /** Confidence score adjustment (negative if H4/direction conflicts) */
+  /** Confidence score adjustment (negative if macro/direction conflicts) */
   confidenceAdjustment: number;
   /** Minimum required Risk/Reward ratio (1.5 follow-trend, 1.0 counter-trend) */
   minRR: number;
   /** Human-readable summary injected into Claude prompt */
   confluenceSummary: string;
-  /** Entry-timing analysis on 15m */
+  /** Entry-timing analysis on the entry timeframe */
   entrySetup: EntrySetupQuality;
 }

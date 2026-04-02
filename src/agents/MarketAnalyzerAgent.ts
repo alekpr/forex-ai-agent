@@ -17,6 +17,19 @@ import {
 
 const TIMEFRAMES: Timeframe[] = ['5m', '15m', '1h', '4h'];
 
+/**
+ * Timeframe hierarchy for multi-TF analysis:
+ * - 5m:  macro=1h  (controls BUY/SELL direction) | primary=15m (confirms momentum) | entry=5m  (pullback)
+ * - 15m: macro=4h  (controls BUY/SELL direction) | primary=1h  (confirms momentum) | entry=15m (pullback)
+ * - 1h/4h: macro=4h / primary=4h / entry=requestedTF
+ */
+const TF_HIERARCHY: Record<string, { primary: Timeframe; macro: Timeframe; entry: Timeframe }> = {
+  '5m':  { primary: '15m', macro: '1h',  entry: '5m'  },
+  '15m': { primary: '1h',  macro: '4h',  entry: '15m' },
+  '1h':  { primary: '4h',  macro: '4h',  entry: '1h'  },
+  '4h':  { primary: '4h',  macro: '4h',  entry: '4h'  },
+};
+
 export class MarketAnalyzerAgent {
   private readonly candleSvc: CandleService;
   private readonly indicatorSvc: IndicatorService;
@@ -65,9 +78,9 @@ export class MarketAnalyzerAgent {
         marketSnapshot['1h']?.close ??
         0;
 
-      // Step 2: Trend confluence analysis (H1 primary + H4 supplementary + 15m entry)
-      // We do a preliminary confluence pass without a direction first so Claude gets full context.
-      const trendContext = this.analyzeTrendConfluence(currentPrice, indicators, null);
+      // Step 2: Trend confluence analysis — TF hierarchy depends on requested timeframe.
+      // Preliminary pass without direction so Claude gets full context.
+      const trendContext = this.analyzeTrendConfluence(currentPrice, indicators, null, timeframe as Timeframe);
 
       // Step 3: Vector similarity search for historical trades
       const embedding = await this.embeddingSvc.createMarketEmbedding(
@@ -101,7 +114,8 @@ export class MarketAnalyzerAgent {
       const finalTrendContext = this.analyzeTrendConfluence(
         currentPrice,
         indicators,
-        aiResult.recommendation as 'BUY' | 'SELL' | null
+        aiResult.recommendation as 'BUY' | 'SELL' | null,
+        timeframe as Timeframe
       );
 
       // Apply confidence adjustment from confluence rules
@@ -176,57 +190,61 @@ export class MarketAnalyzerAgent {
   private analyzeTrendConfluence(
     price: number,
     indicators: MultiTimeframeIndicators,
-    entryDirection: 'BUY' | 'SELL' | null
+    entryDirection: 'BUY' | 'SELL' | null,
+    requestedTimeframe: Timeframe
   ): TrendConfluenceResult {
-    const h1Snap = indicators['1h'];
-    const h4Snap = indicators['4h'];
-    const m15Snap = indicators['15m'];
+    const { primary, macro, entry } = TF_HIERARCHY[requestedTimeframe] ?? TF_HIERARCHY['15m'];
 
-    const h1Trend: TrendDirection = h1Snap
-      ? this.indicatorSvc.getTrendDirection(price, h1Snap)
+    const primarySnap = indicators[primary];
+    const macroSnap   = indicators[macro];
+    const entrySnap   = indicators[entry];
+
+    const primaryTrend: TrendDirection = primarySnap
+      ? this.indicatorSvc.getTrendDirection(price, primarySnap)
       : 'mixed';
-    const h4Trend: TrendDirection = h4Snap
-      ? this.indicatorSvc.getTrendDirection(price, h4Snap)
+    const macroTrend: TrendDirection = macroSnap
+      ? this.indicatorSvc.getTrendDirection(price, macroSnap)
       : 'mixed';
 
-    const h4AlignsH1 = h4Trend === h1Trend || h4Trend === 'mixed';
+    const macroAlignsPrimary = macroTrend === primaryTrend || macroTrend === 'mixed';
 
-    // Determine if the given direction follows H1 trend
+    // Determine if the given direction follows the primary trend
     let isFollowTrend = true;
-    if (entryDirection !== null && h1Trend !== 'mixed') {
+    if (entryDirection !== null && primaryTrend !== 'mixed') {
       isFollowTrend =
-        (entryDirection === 'BUY' && h1Trend === 'bullish') ||
-        (entryDirection === 'SELL' && h1Trend === 'bearish');
+        (entryDirection === 'BUY' && primaryTrend === 'bullish') ||
+        (entryDirection === 'SELL' && primaryTrend === 'bearish');
     }
 
     // Confidence adjustments
     let confidenceAdjustment = 0;
-    if (!h4AlignsH1) confidenceAdjustment -= 0.10;
+    if (!macroAlignsPrimary) confidenceAdjustment -= 0.10;
     if (entryDirection !== null && !isFollowTrend) confidenceAdjustment -= 0.10;
 
-    // Minimum RR by strategy
+    // Minimum RR: follow-trend = 1.5, counter-trend = 1.0
     const minRR = isFollowTrend ? 1.5 : 1.0;
 
-    // Entry setup quality on 15m
-    const entrySetup = m15Snap
-      ? this.indicatorSvc.detectPullbackEntry(price, m15Snap, entryDirection)
-      : this.indicatorSvc.detectPullbackEntry(price, { ema_14: null, ema_60: null, ema_200: null, sma_20: null, rsi_14: null, macd_line: null, macd_signal: null, macd_hist: null, stoch_k: null, stoch_d: null, adx_14: null, bb_upper: null, bb_middle: null, bb_lower: null, atr_14: null }, null);
+    // Entry setup quality on the entry timeframe (pullback to EMA)
+    const emptySnap = { ema_14: null, ema_60: null, ema_200: null, sma_20: null, rsi_14: null, macd_line: null, macd_signal: null, macd_hist: null, stoch_k: null, stoch_d: null, adx_14: null, bb_upper: null, bb_middle: null, bb_lower: null, atr_14: null };
+    const entrySetup = entrySnap
+      ? this.indicatorSvc.detectPullbackEntry(price, entrySnap, entryDirection)
+      : this.indicatorSvc.detectPullbackEntry(price, emptySnap, null);
 
     // Build summary string for Claude prompt
     const confluenceSummary = [
-      `H1 Trend (Primary): ${h1Trend.toUpperCase()}`,
-      `H4 Trend (Supplementary): ${h4Trend.toUpperCase()} — ${h4AlignsH1 ? '✅ Aligned with H1' : '⚠️ Conflicts H1 (confidence −0.10)'}`,
+      `Macro TF (${macro.toUpperCase()}) — Overall Direction Bias: ${macroTrend.toUpperCase()}`,
+      `Primary TF (${primary.toUpperCase()}) — Trend: ${primaryTrend.toUpperCase()} — ${macroAlignsPrimary ? '✅ Aligned with macro' : '⚠️ Conflicts macro (confidence −0.10)'}`,
       entryDirection
-        ? `Trade Direction: ${entryDirection} — ${isFollowTrend ? '✅ Follow trend' : '⚠️ Counter trend (confidence −0.10, RR requirement 1:1.0)'}`
-        : `Trade Direction: TBD — follow H1 trend unless strong reversal signal`,
-      `15m Entry Setup: Pullback to ${entrySetup.nearestEMA === 'none' ? 'N/A' : entrySetup.nearestEMA.toUpperCase()} | Quality: ${entrySetup.entryQuality.toUpperCase()} | MACD: ${entrySetup.macdMomentum} | RSI safe: ${entrySetup.rsiNotExtreme}`,
+        ? `Trade Direction: ${entryDirection} — ${isFollowTrend ? '✅ Follows primary trend' : '⚠️ Counter trend (confidence −0.10, RR req 1:1.0)'}`
+        : `Trade Direction: TBD — must align with macro (${macro.toUpperCase()}) direction`,
+      `${entry.toUpperCase()} Entry Pullback Setup: Near ${entrySetup.nearestEMA === 'none' ? 'N/A (not near EMA — not_setup)' : entrySetup.nearestEMA.toUpperCase()} | Quality: ${entrySetup.entryQuality.toUpperCase()} | MACD: ${entrySetup.macdMomentum} | RSI safe: ${entrySetup.rsiNotExtreme}`,
       `Min Required RR: 1:${minRR} (${isFollowTrend ? 'follow trend' : 'counter trend'})`,
     ].join('\n');
 
     return {
-      h1Trend,
-      h4Trend,
-      h4AlignsH1,
+      primaryTrend,
+      macroTrend,
+      macroAlignsPrimary,
       isFollowTrend,
       confidenceAdjustment,
       minRR,

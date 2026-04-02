@@ -1,8 +1,17 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env';
-import { MultiTimeframeIndicators, TrendConfluenceResult } from '../types/market';
+import { MultiTimeframeIndicators, TrendConfluenceResult, Timeframe } from '../types/market';
 import { CreateTradeLogInput, TradeLog, CloseTradeInput, TradeResultRecord, SimilarTrade } from '../types/trade';
 import { CandleContext } from './CandleService';
+
+/** Identify the current Forex trading session based on UTC clock */
+function getTradingSession(): string {
+  const h = new Date().getUTCHours();
+  if (h >= 13 && h < 16) return 'London/New York Overlap (13:00–16:00 UTC) — peak volatility';
+  if (h >= 8  && h < 16) return 'London Session (08:00–16:00 UTC) — high liquidity';
+  if (h >= 16 && h < 21) return 'New York Session (16:00–21:00 UTC) — high volatility';
+  return 'Asian/Off-peak Session (21:00–08:00 UTC) — low volatility';
+}
 
 export class ClaudeAiService {
   private readonly client: Anthropic;
@@ -152,20 +161,31 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
 - Recent Momentum (last 5 vs prior 5 candles avg): ${candleContext.recentMomentumPct && candleContext.recentMomentumPct > 0 ? '+' : ''}${candleContext.recentMomentumPct}%`
       : '';
 
+    // ATR-based SL guidance for the entry timeframe
+    const entryTfAtr = (indicators as Record<string, { atr_14: number | null } | undefined>)[timeframe]?.atr_14;
+    const atrSlRange = entryTfAtr
+      ? `${(entryTfAtr * 1.0).toFixed(5)}–${(entryTfAtr * 1.5).toFixed(5)}`
+      : 'N/A';
+    // Bangkok datetime + trading session
+    const bangkokNow = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok', hour12: false }).replace(' ', 'T') + '+07:00';
+    const session = getTradingSession();
+
     const prompt = `You are an expert Forex AI advisor. Provide a trading recommendation based on current market conditions, historical DB data, and past trade performance. ตอบเป็นภาษาไทยทั้งหมดในส่วน analysis (ค่า recommendation/confidence/suggested_tp/suggested_sl/risk_score ให้คงรูปแบบเดิม)
 
 **Symbol:** ${symbol} | **Timeframe:** ${timeframe} | **Current Price:** ${currentPrice}
-**Risk Level:** ${riskLevel}
+**Risk Level:** ${riskLevel} | **Date/Time (Bangkok):** ${bangkokNow} | **Session:** ${session}
 
 **━━ STRATEGY CONTEXT (Rule-Based Pre-Analysis) ━━**
 ${trendContext.confluenceSummary}
 
 **Strategy Rules (MUST FOLLOW):**
-1. Primary trend is H1. Recommendation direction MUST align with H1 unless there is an exceptionally strong H1 reversal signal.
-2. If H4 conflicts H1 → explicitly warn in analysis and note confidence is reduced.
-3. Counter-trend trades (direction opposite to H1) require very strong reversal signals, reduce confidence score by at least 0.10 vs a follow-trend setup.
-4. The suggested_tp MUST achieve at least ${trendContext.minRR}:1 Risk/Reward ratio from the suggested_sl distance. This is a ${trendContext.isFollowTrend ? 'follow-trend (RR 1:1.5)' : 'counter-trend (RR 1:1.0)'} setup.
-5. Only recommend BUY/SELL if conviction is high after considering all rules above.
+1. TF Hierarchy: ${timeframe === '5m' ? '1H=macro direction | 15M=primary trend | 5M=PULLBACK entry' : timeframe === '15m' ? '4H=macro direction | 1H=primary trend | 15M=PULLBACK entry' : '4H=macro direction | 4H=primary trend | ' + timeframe.toUpperCase() + '=PULLBACK entry'}
+2. **PULLBACK IS #1 PRIORITY**: Only enter when price has pulled back to EMA14 or EMA60 on the ${timeframe} chart. Do NOT chase breakouts. If entrySetup quality is 'not_setup' → recommend WAIT.
+3. MACRO TF direction controls the BUY/SELL bias. Counter-trend (opposing macro) requires very strong reversal evidence; reduce confidence ≥0.10.
+4. If macro and primary TF trends conflict → warn explicitly in analysis and reduce confidence.
+5. suggested_tp MUST achieve ≥${trendContext.minRR}:1 RR from suggested_sl. This is a ${trendContext.isFollowTrend ? 'follow-trend (min RR 1:1.5)' : 'counter-trend (min RR 1:1.0)'} setup.
+6. SL guidance: set SL at 1.0–1.5× ATR(14) from entry. ${timeframe.toUpperCase()} ATR-based SL range: ±${atrSlRange}.
+7. Only recommend BUY/SELL when conviction is high (>0.65) after all checks above.
 
 **Current Technical Indicators (Multi-timeframe):**
 ${indicatorSummary}
@@ -181,14 +201,14 @@ Based on ALL the above data (strategy context + indicators + DB candle context +
   "suggested_tp": number or null,
   "suggested_sl": number or null,
   "risk_score": 1-10,
-  "analysis": "3-5 sentence analysis in Thai: cover H1/H4 trend alignment, 15m entry setup quality, key indicator signals, and why this recommendation was made"
+  "analysis": "3-5 sentence analysis in Thai: cover macro/primary trend alignment, pullback entry quality on ${timeframe}, key indicator signals from the TF hierarchy, and why this recommendation was made"
 }
 
 Be conservative with confidence scores. Only recommend BUY/SELL if conviction is high (>0.65).`;
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 600,
+      max_tokens: 900,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -230,7 +250,44 @@ Be conservative with confidence scores. Only recommend BUY/SELL if conviction is
     const lines: string[] = [];
     for (const [tf, snap] of Object.entries(indicators)) {
       if (!snap) continue;
-      lines.push(`[${tf}] EMA14:${snap.ema_14?.toFixed(5) ?? 'N/A'} EMA60:${snap.ema_60?.toFixed(5) ?? 'N/A'} EMA200:${snap.ema_200?.toFixed(5) ?? 'N/A'} RSI:${snap.rsi_14?.toFixed(1) ?? 'N/A'} MACD_H:${snap.macd_hist?.toFixed(5) ?? 'N/A'} ADX:${snap.adx_14?.toFixed(1) ?? 'N/A'} BB:[${snap.bb_lower?.toFixed(5) ?? 'N/A'}-${snap.bb_upper?.toFixed(5) ?? 'N/A'}] ATR:${snap.atr_14?.toFixed(5) ?? 'N/A'}`);
+      const { ema_14, ema_60, ema_200, rsi_14, macd_hist, adx_14, bb_lower, bb_upper, atr_14 } = snap;
+
+      // EMA trend structure
+      let trendLabel = 'MIXED';
+      if (ema_14 !== null && ema_60 !== null && ema_200 !== null) {
+        if (ema_14 > ema_60 && ema_60 > ema_200) trendLabel = 'BULLISH (14>60>200)';
+        else if (ema_14 < ema_60 && ema_60 < ema_200) trendLabel = 'BEARISH (14<60<200)';
+      }
+
+      // RSI zone
+      let rsiStr = rsi_14 !== null ? `RSI:${rsi_14.toFixed(1)}` : 'RSI:N/A';
+      if (rsi_14 !== null) {
+        if (rsi_14 < 30)              rsiStr += '(OVERSOLD⚠️)';
+        else if (rsi_14 > 70)         rsiStr += '(OVERBOUGHT⚠️)';
+        else if (rsi_14 >= 40 && rsi_14 <= 60) rsiStr += '(neutral)';
+        else                          rsiStr += '(caution)';
+      }
+
+      // MACD momentum direction
+      let macdStr = macd_hist !== null ? `MACD_H:${macd_hist > 0 ? '+' : ''}${macd_hist.toFixed(5)}` : 'MACD_H:N/A';
+      if (macd_hist !== null) {
+        if (macd_hist > 0.000005)      macdStr += '↑';
+        else if (macd_hist < -0.000005) macdStr += '↓';
+        else                           macdStr += '→';
+      }
+
+      // ADX trend strength
+      let adxStr = adx_14 !== null ? `ADX:${adx_14.toFixed(1)}` : 'ADX:N/A';
+      if (adx_14 !== null) {
+        if (adx_14 >= 25)      adxStr += '(trending)';
+        else if (adx_14 >= 20) adxStr += '(weak trend)';
+        else                   adxStr += '(ranging⚠️)';
+      }
+
+      lines.push(
+        `[${tf}] Trend:${trendLabel} | ${rsiStr} | ${macdStr} | ${adxStr} | ATR:${atr_14?.toFixed(5) ?? 'N/A'}` +
+        `\n       EMA14:${ema_14?.toFixed(5) ?? 'N/A'} EMA60:${ema_60?.toFixed(5) ?? 'N/A'} EMA200:${ema_200?.toFixed(5) ?? 'N/A'} BB:[${bb_lower?.toFixed(5) ?? 'N/A'}–${bb_upper?.toFixed(5) ?? 'N/A'}]`
+      );
     }
     return lines.join('\n');
   }
