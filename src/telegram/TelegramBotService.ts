@@ -383,6 +383,7 @@ export class TelegramBotService {
     });
 
     if (!result.success || !result.data) {
+      console.error('[TelegramBot] executeAnalyze failed:', result.error);
       await ctx.reply(`❌ วิเคราะห์ไม่สำเร็จ: ${result.message}`);
       return;
     }

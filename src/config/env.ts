@@ -11,7 +11,7 @@ const envSchema = z.object({
   TWELVEDATA_API_KEY: z.string().optional(),
   TWELVEDATA_BASE_URL: z.string().default('https://api.twelvedata.com'),
   ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
-  CLAUDE_MODEL: z.string().default('claude-sonnet-4-20250514'),
+  CLAUDE_MODEL: z.string().default('claude-sonnet-4-5'),
   OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
   DEFAULT_USER_ID: z.string().uuid().default('00000000-0000-0000-0000-000000000001'),
   LINE_NOTIFY_TOKEN: z.string().optional(),
