@@ -5,14 +5,22 @@ export class CandleRepository {
   async upsertCandles(candles: OHLCCandle[]): Promise<void> {
     if (candles.length === 0) return;
 
-    const values = candles
+    // Deduplicate by (time, symbol, timeframe) — keep last occurrence to avoid
+    // "ON CONFLICT DO UPDATE command cannot affect row a second time" error.
+    const seen = new Map<string, OHLCCandle>();
+    for (const c of candles) {
+      seen.set(`${c.time.getTime?.() ?? c.time}|${c.symbol}|${c.timeframe}`, c);
+    }
+    const unique = Array.from(seen.values());
+
+    const values = unique
       .map(
         (_, i) =>
           `($${i * 8 + 1}, $${i * 8 + 2}, $${i * 8 + 3}, $${i * 8 + 4}, $${i * 8 + 5}, $${i * 8 + 6}, $${i * 8 + 7}, $${i * 8 + 8})`
       )
       .join(',');
 
-    const params = candles.flatMap((c) => [
+    const params = unique.flatMap((c) => [
       c.time,
       c.symbol,
       c.timeframe,
