@@ -123,7 +123,7 @@ export class TradeSummaryAgent {
     const prompt = buildPrompt(periodLabel, stats, trades);
 
     const message = await this.client.messages.create({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-haiku-4-5',
       max_tokens: 600,
       messages: [{ role: 'user', content: prompt }],
     });
