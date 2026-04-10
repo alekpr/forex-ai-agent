@@ -98,15 +98,19 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const text = this.extractText(response);
+    const rawText = this.extractText(response);
+    // Strip any markdown code fences (e.g. ```json ... ```) before parsing
+    const text = rawText.replace(/```(?:json)?\s*/gi, '').trim();
     try {
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]) as { lesson: string; pattern_tags: string[] };
-        return { lesson: parsed.lesson, patternTags: parsed.pattern_tags ?? [] };
+        if (parsed.lesson) {
+          return { lesson: parsed.lesson, patternTags: parsed.pattern_tags ?? [] };
+        }
       }
     } catch {
-      // fallback: return raw text
+      // fallback: return cleaned text
     }
     return { lesson: text, patternTags: [] };
   }

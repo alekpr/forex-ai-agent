@@ -352,7 +352,7 @@ export class TelegramBotService {
 
     const result = await this.tradeAgent.logTrade(input);
     const msg = formatTradeLogged(result);
-    await ctx.replyWithMarkdownV2(msg);
+    await this.replyMarkdownV2Safe(ctx, msg);
   }
 
   private async executeCloseTrade(ctx: Context<Update>, data: CloseTradeData): Promise<void> {
@@ -370,7 +370,7 @@ export class TelegramBotService {
 
     const result = await this.tradeAgent.closeTrade(data.tradeId!, input);
     const msg = formatTradeClosed(result);
-    await ctx.replyWithMarkdownV2(msg);
+    await this.replyMarkdownV2Safe(ctx, msg);
   }
 
   private async executeAnalyze(ctx: Context<Update>, data: AnalyzeData): Promise<void> {
@@ -389,7 +389,7 @@ export class TelegramBotService {
     }
 
     const msg = formatAnalysis(result);
-    await ctx.replyWithMarkdownV2(msg);
+    await this.replyMarkdownV2Safe(ctx, msg);
   }
 
   private async executeSummary(ctx: Context<Update>, data: SummarizeData): Promise<void> {
@@ -408,8 +408,8 @@ export class TelegramBotService {
       }
 
       const [statsMsg, aiMsg] = formatTradeSummary(periodLabels[period], result.stats, result.aiSummary);
-      await ctx.replyWithMarkdownV2(statsMsg);
-      if (aiMsg) await ctx.replyWithMarkdownV2(aiMsg);
+      await this.replyMarkdownV2Safe(ctx, statsMsg);
+      if (aiMsg) await this.replyMarkdownV2Safe(ctx, aiMsg);
     } catch (err) {
       console.error('[TelegramBot] executeSummary error:', err);
       await ctx.reply('⚠️ เกิดข้อผิดพลาดในการสรุป กรุณาลองใหม่');
@@ -453,6 +453,36 @@ export class TelegramBotService {
         ]],
       },
     });
+  }
+
+  // ─── Telegram message helpers ─────────────────────────────────────────────
+
+  /**
+   * Send a MarkdownV2 message, automatically splitting at newline boundaries
+   * when the text exceeds Telegram's 4096-character per-message limit.
+   */
+  private async replyMarkdownV2Safe(ctx: Context<Update>, text: string): Promise<void> {
+    const LIMIT = 4096;
+    if (text.length <= LIMIT) {
+      await ctx.replyWithMarkdownV2(text);
+      return;
+    }
+
+    // Split into chunks at newline boundaries without exceeding the limit
+    const chunks: string[] = [];
+    let remaining = text;
+    while (remaining.length > LIMIT) {
+      const slice = remaining.slice(0, LIMIT);
+      const splitAt = slice.lastIndexOf('\n');
+      const boundary = splitAt > 0 ? splitAt : LIMIT;
+      chunks.push(remaining.slice(0, boundary));
+      remaining = remaining.slice(boundary).replace(/^\n/, '');
+    }
+    if (remaining) chunks.push(remaining);
+
+    for (const chunk of chunks) {
+      await ctx.replyWithMarkdownV2(chunk);
+    }
   }
 
   private async showOpenTradesKeyboard(ctx: Context<Update>, userId: number): Promise<void> {

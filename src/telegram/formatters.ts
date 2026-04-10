@@ -47,7 +47,7 @@ export function formatTradeClosed(result: { success: boolean; message: string; d
     `🏁 *ปิด Trade สำเร็จ*`,
     ``,
     `💡 *บทเรียนจาก AI:*`,
-    escapeRaw(truncate(stripMarkdown(lesson), 700)),
+    escapeRaw(truncate(stripMarkdown(lesson), 1500)),
   ].join('\n');
 }
 
@@ -111,11 +111,12 @@ function truncate(text: string, maxLen: number): string {
 /** Strip markdown formatting characters from a string before re-escaping for MarkdownV2 */
 function stripMarkdown(text: string): string {
   return text
-    .replace(/\*\*(.*?)\*\*/g, '$1')  // bold
-    .replace(/\*(.*?)\*/g, '$1')       // italic
-    .replace(/`{1,3}([\s\S]*?)`{1,3}/g, '$1') // code
-    .replace(/^#{1,6}\s+/gm, '')      // headings
-    .replace(/^\s*[-*+]\s+/gm, '• ')  // bullets
+    .replace(/```(?:\w+)?\n?([\s\S]*?)```/g, '$1') // fenced code blocks (with optional lang)
+    .replace(/`([^`]+)`/g, '$1')                    // inline code
+    .replace(/\*\*(.*?)\*\*/g, '$1')                // bold
+    .replace(/\*(.*?)\*/g, '$1')                    // italic
+    .replace(/^#{1,6}\s+/gm, '')                    // headings
+    .replace(/^\s*[-*+]\s+/gm, '• ')               // bullets
     .trim();
 }
 
