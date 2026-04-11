@@ -4,8 +4,10 @@ import {
   CategoryScale,
   LinearScale,
   LineElement,
+  BarElement,
   PointElement,
   LineController,
+  BarController,
   Tooltip,
   Legend,
   Filler,
@@ -13,24 +15,17 @@ import {
 } from 'chart.js';
 import { OHLCCandle, DailyOutlookData } from '../types/market';
 
-// chartjs-chart-financial is ESM-only; loaded via dynamic import() at runtime
-// to avoid ERR_REQUIRE_ESM when the project is compiled to CommonJS.
-let financialPluginRegistered = false;
-async function ensureFinancialPlugin(): Promise<void> {
-  if (financialPluginRegistered) return;
-  const { CandlestickController, CandlestickElement, OhlcElement } =
-    await import('chartjs-chart-financial');
-  Chart.register(CandlestickController, CandlestickElement, OhlcElement);
-  financialPluginRegistered = true;
-}
-
-// Register Chart.js core components (synchronous — all CJS-compatible)
+// Register only CJS-compatible Chart.js components.
+// chartjs-chart-financial is ESM-only and cannot be required in a CommonJS
+// build — we use a close-price area chart + overlays instead.
 Chart.register(
   CategoryScale,
   LinearScale,
   LineElement,
+  BarElement,
   PointElement,
   LineController,
+  BarController,
   Tooltip,
   Legend,
   Filler,
@@ -40,8 +35,10 @@ const CHART_WIDTH  = 1200;
 const CHART_HEIGHT = 650;
 
 /**
- * Renders a 4H candlestick chart with EMA lines, pullback zones, and S/R levels.
- * Returns a PNG Buffer suitable for sending via Telegram sendPhoto().
+ * Renders a 4H close-price chart with Hi/Lo bars, EMA lines, pullback zones,
+ * and S/R levels. Returns a PNG Buffer for Telegram sendPhoto().
+ *
+ * Uses only Chart.js core (CJS) — no ESM-only candlestick plugin required.
  */
 export class ChartService {
   private readonly canvas: ChartJSNodeCanvas;
@@ -55,10 +52,6 @@ export class ChartService {
   }
 
   async renderOutlookChart(candles: OHLCCandle[], outlook: DailyOutlookData): Promise<Buffer> {
-    // Ensure the ESM-only financial plugin is loaded before rendering
-    await ensureFinancialPlugin();
-
-    // Use the last 80 candles to keep the chart readable
     const slice = candles.slice(-80);
 
     const labels = slice.map((c) =>
@@ -72,68 +65,48 @@ export class ChartService {
       })
     );
 
-    // ── Candlestick data ───────────────────────────────────────────────────────
-    const candleData = slice.map((c) => ({
-      x: new Date(c.time).getTime(),
-      o: c.open,
-      h: c.high,
-      l: c.low,
-      c: c.close,
-    }));
+    const closes = slice.map((c) => c.close);
 
-    // ── EMA lines from indicators ──────────────────────────────────────────────
-    const snap4h = outlook.indicators['4h'];
-    const ema14val  = snap4h?.ema_14  ?? null;
-    const ema60val  = snap4h?.ema_60  ?? null;
+    // ── EMA values (latest value replicated as flat reference line) ───────────
+    const snap4h   = outlook.indicators['4h'];
+    const ema14val = snap4h?.ema_14 ?? null;
+    const ema60val = snap4h?.ema_60 ?? null;
+    const ema14Line = ema14val !== null ? slice.map(() => ema14val) : null;
+    const ema60Line = ema60val !== null ? slice.map(() => ema60val) : null;
 
-    // Flat lines across all candles (we only have latest value, not history)
-    const ema14Line  = ema14val  !== null ? slice.map(() => ema14val)  : null;
-    const ema60Line  = ema60val  !== null ? slice.map(() => ema60val)  : null;
-
-    // ── Pullback zone fills ────────────────────────────────────────────────────
+    // ── Pullback zones ────────────────────────────────────────────────────────
     const pz = outlook.primaryZone;
     const sz = outlook.secondaryZone;
 
-    const primaryZoneUpper = pz ? slice.map(() => pz.priceHigh) : null;
-    const primaryZoneLower = pz ? slice.map(() => pz.priceLow)  : null;
-    const secondaryZoneUpper = sz ? slice.map(() => sz.priceHigh) : null;
-    const secondaryZoneLower = sz ? slice.map(() => sz.priceLow)  : null;
-
-    // ── Key S/R lines ──────────────────────────────────────────────────────────
+    // ── S/R key levels ────────────────────────────────────────────────────────
     const resistances = outlook.srContext.keyLevels
-      .filter((l) => l.type === 'resistance')
-      .slice(0, 3);
+      .filter((l) => l.type === 'resistance').slice(0, 3);
     const supports = outlook.srContext.keyLevels
-      .filter((l) => l.type === 'support')
-      .slice(0, 3);
+      .filter((l) => l.type === 'support').slice(0, 3);
 
-    // ── Bias colours ──────────────────────────────────────────────────────────
+    // ── Bias colour ───────────────────────────────────────────────────────────
     const biasColour =
       outlook.bias === 'BUY'  ? '#26a69a' :
       outlook.bias === 'SELL' ? '#ef5350' :
       '#b0bec5';
 
-    // ── Build dataset array ────────────────────────────────────────────────────
+    // ── Datasets ──────────────────────────────────────────────────────────────
     const datasets: ChartConfiguration['data']['datasets'] = [];
 
-    // Candlesticks
+    // Close price area (main line)
     datasets.push({
-      type: 'candlestick' as any,
-      label: `${outlook.symbol} 4H`,
-      data: candleData as any,
-      borderColor: {
-        up:   '#26a69a',
-        down: '#ef5350',
-        unchanged: '#b0bec5',
-      } as any,
-      backgroundColor: {
-        up:   '#26a69a',
-        down: '#ef5350',
-        unchanged: '#b0bec5',
-      } as any,
-    });
+      type: 'line',
+      label: `${outlook.symbol} Close`,
+      data: closes,
+      borderColor: '#90a4ae',
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.2,
+      fill: false,
+      order: 1,
+    } as any);
 
-    // EMA14
+    // EMA14 line
     if (ema14Line) {
       datasets.push({
         type: 'line',
@@ -141,13 +114,15 @@ export class ChartService {
         data: ema14Line,
         borderColor: '#ffeb3b',
         borderWidth: 1.5,
+        borderDash: [4, 3],
         pointRadius: 0,
         tension: 0,
-        borderDash: [4, 2],
+        fill: false,
+        order: 2,
       } as any);
     }
 
-    // EMA60
+    // EMA60 line
     if (ema60Line) {
       datasets.push({
         type: 'line',
@@ -155,59 +130,65 @@ export class ChartService {
         data: ema60Line,
         borderColor: '#ff9800',
         borderWidth: 1.5,
+        borderDash: [7, 4],
         pointRadius: 0,
         tension: 0,
-        borderDash: [6, 3],
+        fill: false,
+        order: 2,
       } as any);
     }
 
-    // Primary pullback zone (EMA14 band) — filled area
-    if (primaryZoneUpper && primaryZoneLower) {
+    // Primary pullback zone band (EMA14 ± 0.5×ATR)
+    if (pz) {
       datasets.push({
         type: 'line',
         label: 'Primary Zone',
-        data: primaryZoneUpper,
-        borderColor: 'rgba(38,166,154,0.6)',
+        data: slice.map(() => pz.priceHigh),
+        borderColor: 'rgba(38,166,154,0.5)',
         borderWidth: 1,
         pointRadius: 0,
         fill: '+1',
-        backgroundColor: 'rgba(38,166,154,0.12)',
+        backgroundColor: 'rgba(38,166,154,0.13)',
         tension: 0,
+        order: 10,
       } as any);
       datasets.push({
         type: 'line',
-        label: '_primary_lower',
-        data: primaryZoneLower,
-        borderColor: 'rgba(38,166,154,0.6)',
+        label: '_pz_low',
+        data: slice.map(() => pz.priceLow),
+        borderColor: 'rgba(38,166,154,0.5)',
         borderWidth: 1,
         pointRadius: 0,
         fill: false,
         tension: 0,
+        order: 10,
       } as any);
     }
 
-    // Secondary pullback zone (EMA60 band) — filled area
-    if (secondaryZoneUpper && secondaryZoneLower) {
+    // Secondary pullback zone band (EMA60 ± 1×ATR)
+    if (sz) {
       datasets.push({
         type: 'line',
         label: 'Secondary Zone',
-        data: secondaryZoneUpper,
-        borderColor: 'rgba(255,152,0,0.5)',
+        data: slice.map(() => sz.priceHigh),
+        borderColor: 'rgba(255,152,0,0.45)',
         borderWidth: 1,
         pointRadius: 0,
         fill: '+1',
         backgroundColor: 'rgba(255,152,0,0.10)',
         tension: 0,
+        order: 11,
       } as any);
       datasets.push({
         type: 'line',
-        label: '_secondary_lower',
-        data: secondaryZoneLower,
-        borderColor: 'rgba(255,152,0,0.5)',
+        label: '_sz_low',
+        data: slice.map(() => sz.priceLow),
+        borderColor: 'rgba(255,152,0,0.45)',
         borderWidth: 1,
         pointRadius: 0,
         fill: false,
         tension: 0,
+        order: 11,
       } as any);
     }
 
@@ -217,11 +198,13 @@ export class ChartService {
         type: 'line',
         label: `R ${r.price.toFixed(5)}`,
         data: slice.map(() => r.price),
-        borderColor: 'rgba(239,83,80,0.75)',
+        borderColor: 'rgba(239,83,80,0.8)',
         borderWidth: 1,
+        borderDash: [6, 4],
         pointRadius: 0,
-        borderDash: [5, 4],
         tension: 0,
+        fill: false,
+        order: 3,
       } as any);
     }
 
@@ -231,38 +214,42 @@ export class ChartService {
         type: 'line',
         label: `S ${s.price.toFixed(5)}`,
         data: slice.map(() => s.price),
-        borderColor: 'rgba(38,166,154,0.75)',
+        borderColor: 'rgba(38,166,154,0.8)',
         borderWidth: 1,
+        borderDash: [6, 4],
         pointRadius: 0,
-        borderDash: [5, 4],
         tension: 0,
+        fill: false,
+        order: 3,
       } as any);
     }
 
     // Current price line
     datasets.push({
       type: 'line',
-      label: `Price ${outlook.currentPrice.toFixed(5)}`,
+      label: `Now ${outlook.currentPrice.toFixed(5)}`,
       data: slice.map(() => outlook.currentPrice),
       borderColor: biasColour,
       borderWidth: 2,
       pointRadius: 0,
       tension: 0,
+      fill: false,
+      order: 0,
     } as any);
 
-    // ── Price range for Y axis ─────────────────────────────────────────────────
+    // ── Y-axis range ──────────────────────────────────────────────────────────
     const prices = slice.flatMap((c) => [c.high, c.low]);
-    const minPrice = Math.min(...prices);
-    const maxPrice = Math.max(...prices);
-    const padding = (maxPrice - minPrice) * 0.05;
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const pad  = (maxP - minP) * 0.06;
 
-    // ── Chart title ────────────────────────────────────────────────────────────
+    // ── Title ─────────────────────────────────────────────────────────────────
     const biasLabel = outlook.bias ?? 'NEUTRAL';
     const adxLabel  = outlook.adxValue != null ? ` | ADX ${outlook.adxValue.toFixed(1)}` : '';
-    const titleText = `${outlook.symbol} 4H — Bias: ${biasLabel}${adxLabel}`;
+    const titleText = `${outlook.symbol} 4H  —  Bias: ${biasLabel}${adxLabel}`;
 
     const config: ChartConfiguration = {
-      type: 'bar' as any, // overridden per-dataset
+      type: 'line',
       data: { labels, datasets },
       options: {
         responsive: false,
@@ -274,7 +261,6 @@ export class ChartService {
             labels: {
               color: '#b0bec5',
               font: { size: 11 },
-              // Hide internal fill datasets
               filter: (item) => !item.text.startsWith('_'),
             },
           },
@@ -301,8 +287,8 @@ export class ChartService {
             position: 'right',
             ticks: { color: '#607d8b', font: { size: 10 } },
             grid: { color: 'rgba(96,125,139,0.2)' },
-            min: minPrice - padding,
-            max: maxPrice + padding,
+            min: minP - pad,
+            max: maxP + pad,
           },
         },
       },
@@ -311,3 +297,4 @@ export class ChartService {
     return this.canvas.renderToBuffer(config);
   }
 }
+
