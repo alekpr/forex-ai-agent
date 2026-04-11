@@ -45,4 +45,7 @@ export interface AlertSettings {
   confidenceThreshold: number;
   candleRefreshEnabled: boolean;
   candleRefreshIntervalMinutes: number;
+  dailyOutlookEnabled: boolean;
+  dailyOutlookHour: number;
+  dailyOutlookSymbols: string;
 }

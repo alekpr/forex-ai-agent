@@ -1,6 +1,7 @@
 import { TradeLoggerResponse } from '../types/agent';
 import { AnalyzeResponse } from '../types/agent';
 import { TradeLog } from '../types/trade';
+import { DailyOutlookData } from '../types/market';
 
 // Telegram MarkdownV2 requires escaping: _ * [ ] ( ) ~ ` > # + - = | { } . !
 function escape(text: string | number | null | undefined): string {
@@ -118,6 +119,76 @@ function stripMarkdown(text: string): string {
     .replace(/^#{1,6}\s+/gm, '')                    // headings
     .replace(/^\s*[-*+]\s+/gm, '• ')               // bullets
     .trim();
+}
+
+// ─── Daily Outlook ────────────────────────────────────────────────────────────
+
+const BIAS_EMOJI: Record<string, string> = { BUY: '📈', SELL: '📉', NEUTRAL: '➡️' };
+const TREND_LABEL: Record<string, string> = { bullish: '↑', bearish: '↓', mixed: '⁓' };
+
+/**
+ * Format one or more DailyOutlookData records into a MarkdownV2 Telegram message.
+ * Each symbol is a separate block (~300–400 chars). Returns a single string;
+ * caller is responsible for splitting if > 4096 chars.
+ */
+export function formatDailyOutlook(outlooks: DailyOutlookData[]): string {
+  const bangkokDate = new Date().toLocaleDateString('th-TH', {
+    timeZone: 'Asia/Bangkok',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+  const bangkokTime = new Date().toLocaleTimeString('th-TH', {
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+  const header = `📅 *Daily Outlook — ${escapeRaw(bangkokDate)} \\| ${escapeRaw(bangkokTime)} น\\.*`;
+
+  const blocks = outlooks.map((o) => {
+    const biasEmoji = BIAS_EMOJI[o.bias ?? 'NEUTRAL'] ?? '➡️';
+    const d1Label = TREND_LABEL[o.macroTrend] ?? '⁓';
+    const h4Label = TREND_LABEL[o.primaryTrend] ?? '⁓';
+
+    const priceStr = escape(o.currentPrice.toFixed(5));
+    const adxStr = o.adxValue !== null ? escape(o.adxValue.toFixed(1)) : '—';
+    const adxWarning = o.adxValue !== null && o.adxValue < 20 ? ' ⚠️ Sideways' : '';
+
+    const primaryZoneStr = o.primaryZone
+      ? `${escape(o.primaryZone.priceLow.toFixed(5))}–${escape(o.primaryZone.priceHigh.toFixed(5))}`
+      : '—';
+    const secondaryZoneStr = o.secondaryZone
+      ? `${escape(o.secondaryZone.priceLow.toFixed(5))}–${escape(o.secondaryZone.priceHigh.toFixed(5))}`
+      : '—';
+
+    const nearestR = o.srContext.keyLevels.find(l => l.type === 'resistance' && l.price > o.currentPrice);
+    const nearestS = o.srContext.keyLevels.find(l => l.type === 'support' && l.price < o.currentPrice);
+    const resistanceStr = nearestR ? escape(nearestR.price.toFixed(5)) : '—';
+    const supportStr = nearestS ? escape(nearestS.price.toFixed(5)) : '—';
+
+    const analysisStr = o.aiAnalysis
+      ? escapeRaw(truncate(stripMarkdown(o.aiAnalysis), 400))
+      : '';
+    const planStr = o.tradingPlan
+      ? escapeRaw(truncate(stripMarkdown(o.tradingPlan), 500))
+      : '';
+
+    return [
+      ``,
+      `*${escape(o.symbol)}* \\| ${priceStr}`,
+      `${biasEmoji} Trend: D1${d1Label} 4H${h4Label} \\| ADX: ${adxStr}${escapeRaw(adxWarning)}`,
+      `🎯 *Pullback Zone:* ${primaryZoneStr} \\(EMA14 4H\\)`,
+      `🔁 *Deep Zone:* ${secondaryZoneStr} \\(EMA60 4H\\)`,
+      `📍 R: ${resistanceStr} \\| S: ${supportStr}`,
+      analysisStr ? `\n📝 ${analysisStr}` : '',
+      planStr ? `\n⚡ *แผนวันนี้:*\n${planStr}` : '',
+    ].filter(Boolean).join('\n');
+  });
+
+  return [header, ...blocks].join('\n');
 }
 
 // ─── Trade Summary ────────────────────────────────────────────────────────────

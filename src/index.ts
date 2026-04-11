@@ -63,6 +63,11 @@ async function startServer(): Promise<void> {
   if (settings?.alertEnabled) {
     scheduler.startAlerts(settings.alertIntervalMinutes);
   }
+  if (settings?.dailyOutlookEnabled) {
+    const syms = (settings.dailyOutlookSymbols ?? env.CANDLE_SYMBOLS)
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    scheduler.startDailyOutlook(settings.dailyOutlookHour, syms, env.DEFAULT_USER_ID);
+  }
 
   const server = app.listen(env.PORT, () => {
     console.log(`🚀 Forex AI Agent API running on http://localhost:${env.PORT}`);

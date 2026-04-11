@@ -4,8 +4,11 @@ import { RequestHandler } from 'express';
 import { env } from '../config/env';
 import { TradeLoggerAgent } from '../agents/TradeLoggerAgent';
 import { MarketAnalyzerAgent } from '../agents/MarketAnalyzerAgent';
+import { DailyOutlookAgent } from '../agents/DailyOutlookAgent';
 import { TradeLogRepository } from '../repositories/TradeLogRepository';
+import { AlertRepository } from '../repositories/AlertRepository';
 import { CreateTradeLogInput, CloseTradeInput, TradeResult, TradeDirection } from '../types/trade';
+import { AlertSettings } from '../types/agent';
 import { Timeframe } from '../types/market';
 import {
   ConversationStateManager,
@@ -13,7 +16,7 @@ import {
   LOG_TRADE_FIELDS, CLOSE_TRADE_FIELDS, ANALYZE_FIELDS,
 } from './ConversationState';
 import { routeMessage } from './IntentRouter';
-import { formatTradeLogged, formatTradeClosed, formatAnalysis, formatOpenTradeItem, formatTradeSummary } from './formatters';
+import { formatTradeLogged, formatTradeClosed, formatAnalysis, formatOpenTradeItem, formatTradeSummary, formatDailyOutlook } from './formatters';
 import { TradeSummaryAgent } from '../agents/TradeSummaryAgent';
 import { parseEntryTime } from '../utils/dateParser';
 
@@ -23,8 +26,12 @@ export class TelegramBotService {
   private readonly state: ConversationStateManager;
   private readonly tradeAgent: TradeLoggerAgent;
   private readonly analyzeAgent: MarketAnalyzerAgent;
+  private readonly outlookAgent: DailyOutlookAgent;
   private readonly tradeRepo: TradeLogRepository;
+  private readonly alertRepo: AlertRepository;
   private readonly summaryAgent: TradeSummaryAgent;
+  /** Pending settings edits while user interacts with /settings keyboard */
+  private readonly pendingSettings: Map<number, Partial<AlertSettings>> = new Map();
 
   constructor() {
     const token = env.TELEGRAM_BOT_TOKEN;
@@ -35,7 +42,9 @@ export class TelegramBotService {
     this.state = new ConversationStateManager();
     this.tradeAgent = new TradeLoggerAgent();
     this.analyzeAgent = new MarketAnalyzerAgent();
+    this.outlookAgent = new DailyOutlookAgent();
     this.tradeRepo = new TradeLogRepository();
+    this.alertRepo = new AlertRepository();
     this.summaryAgent = new TradeSummaryAgent();
 
     this.registerHandlers();
@@ -73,6 +82,48 @@ export class TelegramBotService {
           ],
         },
       });
+    });
+
+    this.bot.command('outlook', async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      await ctx.reply('⏳ กำลังสร้าง Daily Outlook อาจใช้เวลา 30–60 วินาที…');
+      try {
+        const settings = await this.alertRepo.getSettings(env.DEFAULT_USER_ID);
+        const rawSymbols = settings?.dailyOutlookSymbols ?? env.CANDLE_SYMBOLS;
+        const symbols = rawSymbols.split(',').map((s) => s.trim()).filter(Boolean);
+        const results = await this.outlookAgent.generateOutlook(env.DEFAULT_USER_ID, symbols);
+        if (!results.length) {
+          await ctx.reply('⚠️ ไม่สามารถสร้าง outlook ได้ (ข้อมูลเปลี่ยนอาจล้าสมัย)');
+          return;
+        }
+        // Agent already broadcasts via NotificationService; also reply in-chat in case chat IDs differ
+        const text = formatDailyOutlook(results);
+        await this.replyMarkdownV2Safe(ctx, text);
+      } catch (err) {
+        console.error('[TelegramBot] /outlook error:', err);
+        await ctx.reply('⚠️ เกิดข้อผิดพลาดในการสร้าง outlook กรุณาลองใหม่');
+      }
+    });
+
+    this.bot.command('settings', async (ctx) => {
+      if (!this.isAllowed(ctx)) return;
+      const userId = ctx.from!.id;
+      try {
+        const settings = await this.alertRepo.getSettings(env.DEFAULT_USER_ID);
+        const current: Partial<AlertSettings> = {
+          dailyOutlookEnabled: settings?.dailyOutlookEnabled ?? false,
+          dailyOutlookHour:    settings?.dailyOutlookHour    ?? 7,
+          dailyOutlookSymbols: settings?.dailyOutlookSymbols ?? 'EURUSD,GBPUSD',
+        };
+        this.pendingSettings.set(userId, current);
+        await ctx.reply('⚙️ *ตั้งค่า Daily Outlook*', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: this.buildSettingsKeyboard(current) },
+        });
+      } catch (err) {
+        console.error('[TelegramBot] /settings error:', err);
+        await ctx.reply('⚠️ โหลดการตั้งค่าไม่สำเร็จ');
+      }
     });
 
     this.bot.command('cancel', async (ctx) => {
@@ -285,6 +336,61 @@ export class TelegramBotService {
     if (callbackData.startsWith('summary_period:')) {
       const period = callbackData.replace('summary_period:', '') as SummarizeData['period'];
       await this.executeSummary(ctx, { period });
+      return;
+    }
+
+    // ─── Settings callbacks ────────────────────────────────────────────────
+    if (callbackData.startsWith('settings_hour:')) {
+      const hour = parseInt(callbackData.replace('settings_hour:', ''), 10);
+      const pending = this.pendingSettings.get(userId) ?? {};
+      pending.dailyOutlookHour = hour;
+      this.pendingSettings.set(userId, pending);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: this.buildSettingsKeyboard(pending) });
+      return;
+    }
+
+    if (callbackData.startsWith('settings_sym:')) {
+      const sym = callbackData.replace('settings_sym:', '');
+      const pending = this.pendingSettings.get(userId) ?? {};
+      const currentSyms = (pending.dailyOutlookSymbols ?? 'EURUSD,GBPUSD')
+        .split(',').map(s => s.trim()).filter(Boolean);
+      const idx = currentSyms.indexOf(sym);
+      if (idx >= 0) currentSyms.splice(idx, 1); else currentSyms.push(sym);
+      pending.dailyOutlookSymbols = currentSyms.join(',') || 'EURUSD';
+      this.pendingSettings.set(userId, pending);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: this.buildSettingsKeyboard(pending) });
+      return;
+    }
+
+    if (callbackData.startsWith('settings_outlook:')) {
+      const enabled = callbackData === 'settings_outlook:true';
+      const pending = this.pendingSettings.get(userId) ?? {};
+      pending.dailyOutlookEnabled = enabled;
+      this.pendingSettings.set(userId, pending);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: this.buildSettingsKeyboard(pending) });
+      return;
+    }
+
+    if (callbackData === 'settings_save') {
+      const pending = this.pendingSettings.get(userId);
+      this.pendingSettings.delete(userId);
+      if (pending) {
+        try {
+          await this.alertRepo.updateSettings(env.DEFAULT_USER_ID, pending);
+          const symLabel = pending.dailyOutlookSymbols ?? 'ไม่มี';
+          const hourLabel = pending.dailyOutlookHour ?? 7;
+          const enabledLabel = pending.dailyOutlookEnabled ? '✅ เปิด' : '❌ ปิด';
+          await ctx.editMessageText(
+            `✅ บันทึกการตั้งค่าแล้ว\n` +
+            `Daily Outlook: ${enabledLabel}\n` +
+            `เวลา: ${hourLabel}:00 น. (Bangkok)\n` +
+            `คู่เงิน: ${symLabel}`
+          );
+        } catch (err) {
+          console.error('[TelegramBot] settings_save error:', err);
+          await ctx.reply('⚠️ บันทึกการตั้งค่าไม่สำเร็จ');
+        }
+      }
       return;
     }
 
@@ -512,6 +618,38 @@ export class TelegramBotService {
       await ctx.reply('⚠️ ไม่สามารถดึงรายการ trade ได้');
       this.state.clear(userId);
     }
+  }
+
+  // ─── Settings keyboard builder ────────────────────────────────────────────
+
+  private buildSettingsKeyboard(pending: Partial<AlertSettings>): InlineKeyboardButton[][] {
+    const hour    = pending.dailyOutlookHour    ?? 7;
+    const symbols = (pending.dailyOutlookSymbols ?? 'EURUSD,GBPUSD')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    const enabled = pending.dailyOutlookEnabled ?? false;
+
+    const SUPPORTED_SYMBOLS = ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD'];
+    const SUPPORTED_HOURS   = [6, 7, 8, 9];
+
+    return [
+      // Row 1: hour selection
+      SUPPORTED_HOURS.map(h => ({
+        text: h === hour ? `✅ ${h}:00` : `${h}:00`,
+        callback_data: `settings_hour:${h}`,
+      })),
+      // Row 2: symbol toggles
+      SUPPORTED_SYMBOLS.map(sym => ({
+        text: symbols.includes(sym) ? `✅ ${sym}` : sym,
+        callback_data: `settings_sym:${sym}`,
+      })),
+      // Row 3: enable / disable
+      [
+        { text: enabled ? '🔔 ปิดการแจ้งเตือน' : '🔕 เปิดการแจ้งเตือน',
+          callback_data: `settings_outlook:${!enabled}` },
+      ],
+      // Row 4: save
+      [{ text: '💾 บันทึก', callback_data: 'settings_save' }],
+    ];
   }
 
   // ─── Pending fields computation ───────────────────────────────────────────

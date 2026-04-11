@@ -112,3 +112,40 @@ export interface SRContext {
   /** Merged & de-duplicated ranked list of all S/R levels near current price */
   keyLevels: SRLevel[];
 }
+
+// ─── Daily Outlook Types ──────────────────────────────────────────────────────
+
+export interface PullbackZone {
+  /** 'primary' = EMA14 zone (shallower pullback), 'secondary' = EMA60 (deeper pullback) */
+  level: 'primary' | 'secondary';
+  ema: 'ema14' | 'ema60';
+  priceLow: number;
+  priceHigh: number;
+}
+
+export interface DailyOutlookData {
+  symbol: string;
+  currentPrice: number;
+  /** D1 trend — overall macro bias */
+  macroTrend: TrendDirection;
+  /** 4H trend — determines entry direction */
+  primaryTrend: TrendDirection;
+  /** EMA14 4H pullback zone (shallower — more common) */
+  primaryZone: PullbackZone | null;
+  /** EMA60 4H pullback zone (deeper — stronger conviction) */
+  secondaryZone: PullbackZone | null;
+  /** S/R computed from D1 candles */
+  srContext: SRContext;
+  /** ATR-14 value on 4H timeframe */
+  adxValue: number | null;
+  /** Full multi-TF indicators (1h, 4h, 1d) */
+  indicators: MultiTimeframeIndicators;
+  /** Claude's directional bias for the day */
+  bias?: 'BUY' | 'SELL' | 'NEUTRAL';
+  /** Claude narrative analysis in Thai */
+  aiAnalysis?: string;
+  /** Claude actionable trading plan in Thai */
+  tradingPlan?: string;
+  /** Pre-formatted Telegram message text (cached) */
+  telegramMessageText?: string;
+}

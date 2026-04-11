@@ -1,19 +1,23 @@
 import cron, { ScheduledTask } from 'node-cron';
 import { AutoAlertAgent } from '../agents/AutoAlertAgent';
 import { CandleRefreshService } from './CandleRefreshService';
+import { DailyOutlookAgent } from '../agents/DailyOutlookAgent';
 import { env } from '../config/env';
 
 export class SchedulerService {
   private alertTask: ScheduledTask | null = null;
   private candleTask: ScheduledTask | null = null;
+  private dailyOutlookTask: ScheduledTask | null = null;
   private readonly agent: AutoAlertAgent;
   private readonly candleRefresh: CandleRefreshService;
+  private readonly outlookAgent: DailyOutlookAgent;
   private currentAlertInterval: number;
   private currentCandleInterval: number;
 
   constructor() {
     this.agent = new AutoAlertAgent();
     this.candleRefresh = new CandleRefreshService();
+    this.outlookAgent = new DailyOutlookAgent();
     this.currentAlertInterval = 15;
     this.currentCandleInterval = 15;
   }
@@ -83,15 +87,57 @@ export class SchedulerService {
     return this.currentCandleInterval;
   }
 
+  // ─── Daily outlook scheduler ───────────────────────────────────────────────
+
+  /**
+   * Schedule daily outlook at `hour:00` on weekdays (Mon–Fri) in Bangkok timezone.
+   * @param hour  0–23 Bangkok time
+   * @param symbols  array of symbol strings, e.g. ['EURUSD', 'GBPUSD']
+   * @param userId  the user ID to run outlook for
+   */
+  startDailyOutlook(hour: number, symbols: string[], userId: string): void {
+    this.stopDailyOutlook();
+    const expression = `0 ${hour} * * 1-5`;
+    if (!cron.validate(expression)) {
+      throw new Error(`Invalid cron expression for daily outlook hour ${hour}`);
+    }
+    this.dailyOutlookTask = cron.schedule(
+      expression,
+      async () => {
+        console.log(`[Scheduler] Running daily outlook for ${symbols.join(', ')}...`);
+        try {
+          await this.outlookAgent.generateOutlook(userId, symbols);
+        } catch (err) {
+          console.error('[Scheduler] Daily outlook error:', err);
+        }
+      },
+      { timezone: 'Asia/Bangkok' }
+    );
+    console.log(`[Scheduler] Daily outlook started — ${hour}:00 weekdays (Bangkok) for ${symbols.join(', ')}`);
+  }
+
+  stopDailyOutlook(): void {
+    if (this.dailyOutlookTask) {
+      this.dailyOutlookTask.stop();
+      this.dailyOutlookTask = null;
+      console.log('[Scheduler] Daily outlook stopped');
+    }
+  }
+
+  isDailyOutlookRunning(): boolean {
+    return this.dailyOutlookTask !== null;
+  }
+
   // ─── Legacy helpers (stop all) ─────────────────────────────────────────────
 
   stop(): void {
     this.stopAlerts();
     this.stopCandleRefresh();
+    this.stopDailyOutlook();
   }
 
   isRunning(): boolean {
-    return this.isAlertRunning() || this.isCandleRefreshRunning();
+    return this.isAlertRunning() || this.isCandleRefreshRunning() || this.isDailyOutlookRunning();
   }
 
   /** @deprecated use getAlertInterval() */

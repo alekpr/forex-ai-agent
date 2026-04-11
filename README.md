@@ -140,6 +140,123 @@ EURUSD,BUY,1h,1.08500,1.09000,2024-01-02 10:00,2024-01-02 18:00,WIN,EMA cross + 
 
 See `data/backtest-sample.csv` for a full example with 15 trades.
 
+## Market Analysis Logic
+
+When a user requests an analysis (via Telegram or the `/analyze` API), `MarketAnalyzerAgent` runs the following pipeline:
+
+### Step 1 — Multi-Timeframe Candle Fetch
+
+Fetches 250 candles for **all four timeframes** (`5m`, `15m`, `1h`, `4h`) simultaneously from the market data API (TwelveData / Finnhub). Also pulls the last 50 DB-stored candles for Claude's candlestick context.
+
+### Step 2 — Indicator Computation
+
+For each timeframe, `IndicatorService.computeIndicators()` calculates:
+
+| Indicator | Library | Notes |
+|-----------|---------|-------|
+| EMA 14 / 60 / 200 | `technicalindicators` | Includes `ema_14_prev` / `ema_60_prev` (value 3 bars ago) for slope detection |
+| SMA 20 | `technicalindicators` | |
+| RSI 14 | `technicalindicators` | |
+| MACD (12/26/9) | `technicalindicators` | Line, signal, histogram |
+| Stochastic (14/3/3) | `technicalindicators` | %K and %D |
+| ADX 14 | `technicalindicators` | Trend strength |
+| Bollinger Bands (20,2) | `technicalindicators` | Upper / middle / lower |
+| ATR 14 | `technicalindicators` | Used for SL enforcement and proximity checks |
+
+### Step 3 — Trend Direction (EMA Stack + Slope)
+
+`getTrendDirection()` requires **both** stack alignment **and** slope confirmation:
+
+```
+Bullish  : EMA14 > EMA60 > EMA200  AND  EMA14 & EMA60 are rising (slope > 0)
+Bearish  : EMA14 < EMA60 < EMA200  AND  EMA14 & EMA60 are falling (slope < 0)
+Mixed    : Stack not aligned  OR  slopes conflict direction (flattening / transitioning)
+```
+
+> Slope is computed by comparing the current EMA value against the value **3 bars ago**. A bullish stack with both EMAs flattening is downgraded to `mixed` to avoid entering during momentum exhaustion.
+
+### Step 4 — Timeframe Hierarchy & Confluence Rules
+
+Each entry timeframe maps to a **macro TF** (overall bias) and a **primary TF** (momentum confirmation):
+
+| Entry TF | Macro TF | Primary TF |
+|----------|----------|------------|
+| 5m | 1h | 15m |
+| 15m | 4h | 1h |
+| 1h | 4h | 4h |
+| 4h | 4h | 4h |
+
+`analyzeTrendConfluence()` applies the following rules to adjust Claude's raw confidence score:
+
+| Condition | Confidence Adjustment | Min RR |
+|-----------|----------------------|--------|
+| Macro TF conflicts primary TF | −0.10 | — |
+| Trade direction counters primary trend | −0.10 | 1:1.0 |
+| Trade direction follows primary trend | — | 1:1.5 |
+
+The initial direction bias is derived from the **macro TF trend** before calling Claude, so Claude receives a meaningful pre-evaluated confluence summary in its prompt instead of a placeholder.
+
+### Step 5 — Support / Resistance Detection
+
+`computeSupportResistance()` builds the S/R context from three sources:
+
+1. **Pivot Points** — Classic PP / R1–R3 / S1–S3 derived from the most recent completed candle
+2. **Swing High / Low** — Highest and lowest close within a ±5-bar window, applied across the last 100 candles
+3. **Round Numbers** — Levels at the nearest 0.0005, 0.001, 0.005, 0.01, 0.1 increments above and below price
+
+All levels within **ATR × 3** of the current price are retained, then de-duplicated and ranked by `strength` (`strong` / `moderate` / `weak`). The final `keyLevels` list is sent to Claude as positional context.
+
+### Step 6 — Claude AI Synthesis
+
+`ClaudeAiService.generateAnalysisRecommendation()` sends Claude a structured prompt containing:
+
+- Multi-TF indicator snapshot
+- Pre-evaluated confluence summary (macro trend, primary trend, entry quality, required RR)
+- S/R key levels with source and strength
+- Recent similar trades from the vector store (for win-rate context)
+- Last 50 candles in text form (candlestick context)
+
+Claude returns: `recommendation` (BUY / SELL / WAIT), `confidence` (0–1), `suggestedTp`, `suggestedSl`, `riskScore`, and `analysis` text.
+
+### Step 7 — Post-Claude Corrections
+
+After receiving Claude's recommendation, three validation passes are applied in sequence:
+
+#### 7a — Confidence Re-evaluation
+If Claude's recommendation disagrees with the initial macro-bias direction, `analyzeTrendConfluence()` is called again with Claude's actual direction to apply the correct penalty. The final confidence is capped at **0.95**.
+
+#### 7b — ATR SL Enforcement
+```
+SL distance < 1.0 × ATR  →  push SL out to exactly 1.0 × ATR (too tight, trivially stopped)
+SL distance > 2.5 × ATR  →  log warning (allowed — Claude may have structural reason)
+```
+
+#### 7c — S/R SL / TP Placement Validation
+- **SL**: If a support (for BUY) or resistance (for SELL) level sits between the entry price and the suggested SL, the SL is snapped to just beyond that level (±1 pip buffer) so the position is not closed before the key level is actually broken.
+- **TP**: If a strong or moderate S/R level lies within **60% of the TP distance**, a warning is logged — the level may act as a barrier and stall the move before TP is reached.
+
+#### 7d — Minimum RR Enforcement
+If the final TP / SL produce a reward:risk below `minRR` (1.5 follow-trend, 1.0 counter-trend), TP is recalculated to achieve exactly `minRR`:
+
+```
+requiredReward = |entry − finalSl| × minRR
+adjustedTp    = entry ± requiredReward
+```
+
+### Analysis Output
+
+| Field | Description |
+|-------|-------------|
+| `recommendation` | `BUY` / `SELL` / `WAIT` |
+| `confidence` | 0–0.95, post-adjustments |
+| `suggestedTp` | ATR+S/R+RR-validated take-profit |
+| `suggestedSl` | ATR+S/R-validated stop-loss |
+| `riskScore` | Claude's risk assessment (1–10) |
+| `aiAnalysis` | Full Claude commentary (Thai/English) |
+| `winRate` | Historical win rate from similar trades (vector search) |
+
+---
+
 ## Project Structure
 
 ```

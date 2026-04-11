@@ -60,4 +60,44 @@ export class NotificationService {
       }
     );
   }
+
+  /**
+   * Broadcast a daily outlook message to the configured Telegram chat.
+   * Accepts a pre-formatted MarkdownV2 string. Splits at newline boundaries
+   * if longer than Telegram's 4096-char limit. Falls back to plain text on parse error.
+   */
+  async broadcastDailyOutlook(markdownV2Text: string): Promise<void> {
+    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
+      console.warn('[NotificationService] Telegram not configured — skipping daily outlook broadcast');
+      return;
+    }
+
+    const LIMIT = 4096;
+    const chunks: string[] = [];
+    let remaining = markdownV2Text;
+    while (remaining.length > LIMIT) {
+      const slice = remaining.slice(0, LIMIT);
+      const splitAt = slice.lastIndexOf('\n');
+      const boundary = splitAt > 0 ? splitAt : LIMIT;
+      chunks.push(remaining.slice(0, boundary));
+      remaining = remaining.slice(boundary).replace(/^\n/, '');
+    }
+    if (remaining) chunks.push(remaining);
+
+    for (const chunk of chunks) {
+      try {
+        await axios.post(
+          `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+          { chat_id: env.TELEGRAM_CHAT_ID, text: chunk, parse_mode: 'MarkdownV2' }
+        );
+      } catch {
+        // Fallback: strip MarkdownV2 escapes and send plain text
+        const plain = chunk.replace(/\\([_*[\]()~`>#+\-=|{}.!])/g, '$1');
+        await axios.post(
+          `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+          { chat_id: env.TELEGRAM_CHAT_ID, text: plain }
+        );
+      }
+    }
+  }
 }

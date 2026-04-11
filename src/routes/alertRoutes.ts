@@ -15,6 +15,9 @@ const updateSettingsSchema = z.object({
   confidenceThreshold: z.number().min(0.5).max(1.0).optional(),
   candleRefreshEnabled: z.boolean().optional(),
   candleRefreshIntervalMinutes: z.number().int().min(5).max(1440).optional(),
+  dailyOutlookEnabled: z.boolean().optional(),
+  dailyOutlookHour: z.number().int().min(0).max(23).optional(),
+  dailyOutlookSymbols: z.string().min(1).optional(),
 });
 
 // GET /api/alerts/settings
@@ -30,6 +33,7 @@ router.get('/settings', async (_req: Request, res: Response): Promise<void> => {
     alertCurrentInterval: scheduler.getAlertInterval(),
     candleRefreshSchedulerRunning: scheduler.isCandleRefreshRunning(),
     candleRefreshCurrentInterval: scheduler.getCandleRefreshInterval(),
+    dailyOutlookSchedulerRunning: scheduler.isDailyOutlookRunning(),
   });
 });
 
@@ -43,7 +47,8 @@ router.put('/settings', async (req: Request, res: Response): Promise<void> => {
 
   await alertRepo.updateSettings(env.DEFAULT_USER_ID, parsed.data);
 
-  const { alertEnabled, alertIntervalMinutes, candleRefreshEnabled, candleRefreshIntervalMinutes } = parsed.data;
+  const { alertEnabled, alertIntervalMinutes, candleRefreshEnabled, candleRefreshIntervalMinutes,
+          dailyOutlookEnabled, dailyOutlookHour, dailyOutlookSymbols } = parsed.data;
 
   // Alert scheduler
   if (alertEnabled === true) {
@@ -63,12 +68,29 @@ router.put('/settings', async (req: Request, res: Response): Promise<void> => {
     scheduler.startCandleRefresh(candleRefreshIntervalMinutes);
   }
 
+  // Daily outlook scheduler
+  const updatedSettingsForOutlook = await alertRepo.getSettings(env.DEFAULT_USER_ID);
+  if (dailyOutlookEnabled === true) {
+    const hour = dailyOutlookHour ?? updatedSettingsForOutlook?.dailyOutlookHour ?? 7;
+    const syms = (dailyOutlookSymbols ?? updatedSettingsForOutlook?.dailyOutlookSymbols ?? 'EURUSD,GBPUSD')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    scheduler.startDailyOutlook(hour, syms, env.DEFAULT_USER_ID);
+  } else if (dailyOutlookEnabled === false) {
+    scheduler.stopDailyOutlook();
+  } else if ((dailyOutlookHour !== undefined || dailyOutlookSymbols !== undefined) && scheduler.isDailyOutlookRunning()) {
+    const hour = dailyOutlookHour ?? updatedSettingsForOutlook?.dailyOutlookHour ?? 7;
+    const syms = (dailyOutlookSymbols ?? updatedSettingsForOutlook?.dailyOutlookSymbols ?? 'EURUSD,GBPUSD')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    scheduler.startDailyOutlook(hour, syms, env.DEFAULT_USER_ID);
+  }
+
   const updated = await alertRepo.getSettings(env.DEFAULT_USER_ID);
   res.json({
     success: true,
     settings: updated,
     alertSchedulerRunning: scheduler.isAlertRunning(),
     candleRefreshSchedulerRunning: scheduler.isCandleRefreshRunning(),
+    dailyOutlookSchedulerRunning: scheduler.isDailyOutlookRunning(),
   });
 });
 

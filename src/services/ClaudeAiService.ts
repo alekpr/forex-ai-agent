@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env';
-import { MultiTimeframeIndicators, TrendConfluenceResult, Timeframe, SRContext } from '../types/market';
+import { MultiTimeframeIndicators, TrendConfluenceResult, Timeframe, SRContext, PullbackZone } from '../types/market';
 import { CreateTradeLogInput, TradeLog, CloseTradeInput, TradeResultRecord, SimilarTrade } from '../types/trade';
 import { CandleContext } from './CandleService';
 
@@ -324,6 +324,122 @@ ${sLines}
 Swing Highs: ${sr.swingHighs.slice(-3).map(fmt).join(' | ') || 'N/A'}
 Swing Lows:  ${sr.swingLows.slice(-3).map(fmt).join(' | ') || 'N/A'}
 Round Levels near price: ${sr.roundLevels.filter(r => Math.abs(r - currentPrice) < Math.abs(currentPrice * 0.005)).map(fmt).join(' | ') || 'N/A'}`;
+  }
+
+  /**
+   * Generate a daily market outlook for DailyOutlookAgent.
+   * Focuses on: where to wait for pullback today, confirmation signals, S/R to watch.
+   * Does NOT give a specific entry signal — only a forward-looking plan.
+   */
+  async generateDailyOutlook(
+    symbol: string,
+    currentPrice: number,
+    indicators: MultiTimeframeIndicators,
+    srContext: SRContext,
+    pullbackZones: { primaryZone: PullbackZone | null; secondaryZone: PullbackZone | null },
+    riskLevel = 'medium'
+  ): Promise<{
+    bias: 'BUY' | 'SELL' | 'NEUTRAL';
+    keyResistance: number | null;
+    keySupport: number | null;
+    analysis: string;
+    tradingPlan: string;
+  }> {
+    const bangkokNow = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok', hour12: false }).replace(' ', 'T') + '+07:00';
+    const indicatorSummary = this.formatIndicatorsForPrompt(indicators);
+    const srSection = this.formatSRForPrompt(srContext, currentPrice);
+
+    const snap4h = (indicators as Record<string, import('../types/market').IndicatorSnapshot | undefined>)['4h'];
+    const adx4h = snap4h?.adx_14;
+    const adxWarning = adx4h !== null && adx4h !== undefined && adx4h < 20
+      ? `⚠️ ADX(4H)=${adx4h.toFixed(1)} < 20 — ตลาดอยู่ในช่วง sideways / ranging ควรระวัง false breakout`
+      : '';
+
+    const primaryZoneText = pullbackZones.primaryZone
+      ? `Primary Pullback Zone (EMA14 4H ±0.5×ATR): ${pullbackZones.primaryZone.priceLow.toFixed(5)} – ${pullbackZones.primaryZone.priceHigh.toFixed(5)}`
+      : 'Primary Pullback Zone (EMA14 4H): N/A';
+
+    const secondaryZoneText = pullbackZones.secondaryZone
+      ? `Secondary Pullback Zone (EMA60 4H ±1.0×ATR): ${pullbackZones.secondaryZone.priceLow.toFixed(5)} – ${pullbackZones.secondaryZone.priceHigh.toFixed(5)}`
+      : 'Secondary Pullback Zone (EMA60 4H): N/A';
+
+    const prompt = `You are an expert Forex market analyst providing a DAILY FORWARD-LOOKING PLAN for a trader. 
+ตอบเป็นภาษาไทยทั้งหมดในส่วน analysis และ trading_plan
+
+**Symbol:** ${symbol} | **Current Price:** ${currentPrice} | **Risk:** ${riskLevel}
+**Date/Time (Bangkok):** ${bangkokNow}
+
+${adxWarning}
+
+**━━ PULLBACK ZONES (Pre-Calculated from 4H EMA + ATR) ━━**
+${primaryZoneText}
+${secondaryZoneText}
+
+These zones are where price is EXPECTED to retrace before resuming trend. Your job is to:
+1. Assess whether today's D1 and 4H trend support buying or selling during a pullback
+2. Identify specific S/R levels to watch for confirmation
+3. Describe WHAT CONFIRMATION to wait for (MACD, RSI, candle pattern)
+4. NOT give a specific entry now — give a PLAN for what conditions would trigger entry
+
+**Multi-Timeframe Indicators (D1 = macro | 4H = primary | 1H = entry timing):**
+${indicatorSummary}
+${srSection}
+
+**Strategy Context:**
+- D1 EMA stack = macro bias (bullish 14>60>200, bearish 14<60<200, mixed otherwise)
+- 4H EMA stack = trade direction bias (BUY if bullish, SELL if bearish)  
+- Pullback to EMA14 (4H) = primary entry opportunity
+- Pullback to EMA60 (4H) = secondary entry opportunity (deeper pullback = stronger)
+- ADX > 25 = trending market (good for pullback entries); ADX < 20 = ranging (avoid)
+- If D1 and 4H trends conflict = reduce conviction, mention explicitly
+
+Respond in JSON:
+{
+  "bias": "BUY" | "SELL" | "NEUTRAL",
+  "key_resistance": number or null,
+  "key_support": number or null,
+  "analysis": "3-4 sentences in Thai: D1 macro trend, 4H primary trend, alignment assessment, ADX market state",
+  "trading_plan": "3-5 sentences in Thai: (1) where to watch for pullback today, (2) which zone is priority (primary/secondary), (3) what confirmation signals to wait for (MACD histogram turning, RSI recovering from 40, bullish/bearish candle), (4) nearest S/R levels to be aware of as TP targets or invalidation points"
+}`;
+
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 700,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const rawText = this.extractText(response);
+    const text = rawText.replace(/```(?:json)?\s*/gi, '').trim();
+
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]) as {
+          bias: 'BUY' | 'SELL' | 'NEUTRAL';
+          key_resistance: number | null;
+          key_support: number | null;
+          analysis: string;
+          trading_plan: string;
+        };
+        return {
+          bias: parsed.bias ?? 'NEUTRAL',
+          keyResistance: parsed.key_resistance ?? null,
+          keySupport: parsed.key_support ?? null,
+          analysis: parsed.analysis ?? '',
+          tradingPlan: parsed.trading_plan ?? '',
+        };
+      }
+    } catch {
+      // fallback
+    }
+
+    return {
+      bias: 'NEUTRAL',
+      keyResistance: null,
+      keySupport: null,
+      analysis: text,
+      tradingPlan: '',
+    };
   }
 
   private calcRR(trade: CreateTradeLogInput): string {
