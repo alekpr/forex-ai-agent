@@ -17,6 +17,10 @@ export interface IndicatorSnapshot {
   ema_60: number | null;
   ema_200: number | null;
   sma_20: number | null;
+  /** EMA14 value 3 bars ago — used for slope/direction detection */
+  ema_14_prev: number | null;
+  /** EMA60 value 3 bars ago — used for slope/direction detection */
+  ema_60_prev: number | null;
   // Oscillators
   rsi_14: number | null;
   macd_line: number | null;

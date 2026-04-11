@@ -94,6 +94,8 @@ export class IndicatorService {
       ema_60: last(ema60) ?? null,
       ema_200: last(ema200) ?? null,
       sma_20: last(sma20) ?? null,
+      ema_14_prev: ema14.length > 3 ? ema14[ema14.length - 4] : null,
+      ema_60_prev: ema60.length > 3 ? ema60[ema60.length - 4] : null,
       rsi_14: last(rsi) ?? null,
       macd_line: macdLast?.MACD ?? null,
       macd_signal: macdLast?.signal ?? null,
@@ -135,18 +137,33 @@ export class IndicatorService {
   }
 
   /**
-   * Determine trend direction from EMA stack alignment.
-   * Bullish  : EMA14 > EMA60 > EMA200
-   * Bearish  : EMA14 < EMA60 < EMA200
-   * Mixed    : EMAs are not clearly stacked (sideways / transition)
+   * Determine trend direction from EMA stack alignment AND slope.
+   *
+   * Bullish  : EMA14 > EMA60 > EMA200  AND  both EMA14 & EMA60 are rising (slope > 0)
+   * Bearish  : EMA14 < EMA60 < EMA200  AND  both EMA14 & EMA60 are falling (slope < 0)
+   * Mixed    : Stack not aligned OR slope conflicts direction (flattening/transitioning)
    */
   getTrendDirection(price: number, snap: IndicatorSnapshot): TrendDirection {
-    const { ema_14, ema_60, ema_200 } = snap;
+    const { ema_14, ema_60, ema_200, ema_14_prev, ema_60_prev } = snap;
     if (ema_14 === null || ema_60 === null || ema_200 === null) return 'mixed';
 
-    if (ema_14 > ema_60 && ema_60 > ema_200) return 'bullish';
-    if (ema_14 < ema_60 && ema_60 < ema_200) return 'bearish';
-    return 'mixed';
+    const stackBullish = ema_14 > ema_60 && ema_60 > ema_200;
+    const stackBearish = ema_14 < ema_60 && ema_60 < ema_200;
+
+    if (!stackBullish && !stackBearish) return 'mixed';
+
+    // Slope check: EMA must be moving in the direction of the stack
+    const ema14Rising  = ema_14_prev !== null ? ema_14 > ema_14_prev : null;
+    const ema60Rising  = ema_60_prev !== null ? ema_60 > ema_60_prev : null;
+
+    if (stackBullish) {
+      // If we have slope data and both EMAs are not rising → transition/mixed
+      if (ema14Rising === false && ema60Rising === false) return 'mixed';
+      return 'bullish';
+    }
+    // stackBearish
+    if (ema14Rising === true && ema60Rising === true) return 'mixed';
+    return 'bearish';
   }
 
   /**

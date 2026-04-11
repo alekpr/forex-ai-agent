@@ -13,6 +13,7 @@ import {
   MultiTimeframeIndicators,
   TrendDirection,
   TrendConfluenceResult,
+  SRContext,
 } from '../types/market';
 
 const TIMEFRAMES: Timeframe[] = ['5m', '15m', '1h', '4h'];
@@ -78,9 +79,17 @@ export class MarketAnalyzerAgent {
         marketSnapshot['1h']?.close ??
         0;
 
-      // Step 2: Trend confluence analysis — TF hierarchy depends on requested timeframe.
-      // Preliminary pass without direction so Claude gets full context.
-      const trendContext = this.analyzeTrendConfluence(currentPrice, indicators, null, timeframe as Timeframe);
+      // Step 2: Trend confluence analysis — derive macro-bias direction first so Claude
+      // receives a meaningful confluenceSummary from the start (single-pass approach).
+      // We pass the macro-trend direction as initial bias (BUY if bullish, SELL if bearish).
+      const macroSnap = indicators[TF_HIERARCHY[timeframe as Timeframe]?.macro ?? '4h'];
+      const macroBias = macroSnap
+        ? this.indicatorSvc.getTrendDirection(currentPrice, macroSnap)
+        : 'mixed';
+      const initialDirection: 'BUY' | 'SELL' | null =
+        macroBias === 'bullish' ? 'BUY' : macroBias === 'bearish' ? 'SELL' : null;
+
+      const trendContext = this.analyzeTrendConfluence(currentPrice, indicators, initialDirection, timeframe as Timeframe);
 
       // Step 3: Vector similarity search for historical trades
       const embedding = await this.embeddingSvc.createMarketEmbedding(
@@ -117,25 +126,56 @@ export class MarketAnalyzerAgent {
         srContext
       );
 
-      // Step 5: Re-evaluate confluence with the direction Claude returned
-      const finalTrendContext = this.analyzeTrendConfluence(
-        currentPrice,
-        indicators,
-        aiResult.recommendation as 'BUY' | 'SELL' | null,
-        timeframe as Timeframe
-      );
+      // Step 5: Re-evaluate confluence with the actual direction Claude returned.
+      // If Claude agreed with macro bias, the summary is already correct; if Claude
+      // deviated (e.g. chose counter-trend), recalculate to apply the counter-trend penalties.
+      const claudeDirection = aiResult.recommendation as 'BUY' | 'SELL' | 'WAIT' | null;
+      const finalTrendContext =
+        claudeDirection === initialDirection || claudeDirection === 'WAIT'
+          ? trendContext  // reuse — Claude followed the bias we already evaluated
+          : this.analyzeTrendConfluence(currentPrice, indicators, claudeDirection, timeframe as Timeframe);
 
-      // Apply confidence adjustment from confluence rules
+      // Apply confidence adjustment from confluence rules (cap 0–0.95)
       const adjustedConfidence = Math.max(
         0,
-        Math.min(1, aiResult.confidence + finalTrendContext.confidenceAdjustment)
+        Math.min(0.95, aiResult.confidence + finalTrendContext.confidenceAdjustment)
       );
 
-      // Step 6: RR validation — enforce minimum RR per strategy rules
-      const { adjustedTp, rrAdjusted, actualRR } = this.validateAndAdjustRR(
+      // Step 6a: ATR SL enforcement — SL must be 1–2× ATR away from entry
+      const entrySnap = indicators[timeframe as Timeframe];
+      const entryAtr = entrySnap?.atr_14 ?? null;
+      const { finalSl, slAtrAdjusted } = this.enforceAtrSl(
+        currentPrice,
+        aiResult.suggestedSl,
+        aiResult.recommendation as 'BUY' | 'SELL' | null,
+        entryAtr
+      );
+      if (slAtrAdjusted) {
+        console.log(
+          `[MarketAnalyzerAgent] SL ATR-enforced for ${symbol}: ` +
+          `${aiResult.suggestedSl} → ${finalSl} (ATR=${entryAtr})`
+        );
+      }
+
+      // Step 6b: S/R SL/TP placement validation — snap SL behind nearest S/R;
+      // cap or warn if TP is blocked by strong S/R.
+      const recommendation = aiResult.recommendation as 'BUY' | 'SELL' | null;
+      const { finalSl: srAdjustedSl, finalTp: srAdjustedTp, srWarning } = this.validateSRPlacement(
         currentPrice,
         aiResult.suggestedTp,
-        aiResult.suggestedSl,
+        finalSl,
+        recommendation,
+        srContext
+      );
+      if (srWarning) {
+        console.log(`[MarketAnalyzerAgent] S/R warning for ${symbol}: ${srWarning}`);
+      }
+
+      // Step 6c: RR validation — enforce minimum RR per strategy rules
+      const { adjustedTp, rrAdjusted, actualRR } = this.validateAndAdjustRR(
+        currentPrice,
+        srAdjustedTp,
+        srAdjustedSl,
         finalTrendContext.minRR
       );
 
@@ -155,7 +195,7 @@ export class MarketAnalyzerAgent {
         adjustedConfidence,
         aiResult.analysis,
         adjustedTp,
-        aiResult.suggestedSl,
+        srAdjustedSl,
         indicators
       );
 
@@ -170,7 +210,7 @@ export class MarketAnalyzerAgent {
             : NonNullable<AnalyzeResponse['data']>['recommendation'],
           confidence: adjustedConfidence,
           suggestedTp: adjustedTp,
-          suggestedSl: aiResult.suggestedSl,
+          suggestedSl: srAdjustedSl,
           riskScore: aiResult.riskScore,
           aiAnalysis: aiResult.analysis,
           similarTrades,
@@ -232,7 +272,7 @@ export class MarketAnalyzerAgent {
     const minRR = isFollowTrend ? 1.5 : 1.0;
 
     // Entry setup quality on the entry timeframe (pullback to EMA)
-    const emptySnap = { ema_14: null, ema_60: null, ema_200: null, sma_20: null, rsi_14: null, macd_line: null, macd_signal: null, macd_hist: null, stoch_k: null, stoch_d: null, adx_14: null, bb_upper: null, bb_middle: null, bb_lower: null, atr_14: null };
+    const emptySnap = { ema_14: null, ema_60: null, ema_200: null, sma_20: null, rsi_14: null, macd_line: null, macd_signal: null, macd_hist: null, stoch_k: null, stoch_d: null, adx_14: null, bb_upper: null, bb_middle: null, bb_lower: null, atr_14: null, ema_14_prev: null, ema_60_prev: null };
     const entrySetup = entrySnap
       ? this.indicatorSvc.detectPullbackEntry(price, entrySnap, entryDirection)
       : this.indicatorSvc.detectPullbackEntry(price, emptySnap, null);
@@ -291,5 +331,132 @@ export class MarketAnalyzerAgent {
       : price - requiredReward;  // SELL direction
 
     return { adjustedTp: parseFloat(adjustedTp.toFixed(5)), rrAdjusted: true, actualRR };
+  }
+
+  /**
+   * Enforce ATR-based SL bounds.
+   * - SL closer than 1.0× ATR → push out to exactly 1.0× ATR (too tight, gets stopped trivially)
+   * - SL further than 2.5× ATR → log a warning (allowed, Claude may have structural reason)
+   */
+  private enforceAtrSl(
+    price: number,
+    suggestedSl: number | null,
+    direction: 'BUY' | 'SELL' | null,
+    atr: number | null
+  ): { finalSl: number | null; slAtrAdjusted: boolean } {
+    if (suggestedSl === null || atr === null || atr === 0 || direction === null || direction === 'WAIT' as string) {
+      return { finalSl: suggestedSl, slAtrAdjusted: false };
+    }
+
+    const slDist = Math.abs(price - suggestedSl);
+    const minDist = 1.0 * atr;
+    const warnDist = 2.5 * atr;
+
+    if (slDist >= minDist) {
+      if (slDist > warnDist) {
+        console.warn(
+          `[MarketAnalyzerAgent] SL distance ${slDist.toFixed(5)} exceeds 2.5× ATR (${warnDist.toFixed(5)}) — wide SL accepted`
+        );
+      }
+      return { finalSl: suggestedSl, slAtrAdjusted: false };
+    }
+
+    // Too tight — push SL out to 1.0× ATR
+    const finalSl = direction === 'BUY'
+      ? parseFloat((price - minDist).toFixed(5))
+      : parseFloat((price + minDist).toFixed(5));
+    return { finalSl, slAtrAdjusted: true };
+  }
+
+  /**
+   * Validate SL/TP placement against S/R key levels.
+   *
+   * SL fix: for BUY, if there is a support level between price and SL,
+   * push SL to just beyond that support (support - buffer).
+   * For SELL, if there is a resistance between price and SL, push SL beyond it.
+   *
+   * TP warning: if a strong/moderate S/R level lies between price and TP within 50%
+   * of the TP distance, warn (the S/R could block the move).
+   */
+  private validateSRPlacement(
+    price: number,
+    suggestedTp: number | null,
+    suggestedSl: number | null,
+    direction: 'BUY' | 'SELL' | null,
+    srContext: SRContext | undefined
+  ): { finalSl: number | null; finalTp: number | null; srWarning: string | null } {
+    if (!srContext || !direction || direction === 'WAIT' as string || suggestedSl === null) {
+      return { finalSl: suggestedSl, finalTp: suggestedTp, srWarning: null };
+    }
+
+    const buffer = 0.0001; // ~1 pip buffer beyond S/R for SL placement
+    let finalSl = suggestedSl;
+    let finalTp = suggestedTp;
+    let srWarning: string | null = null;
+
+    if (direction === 'BUY') {
+      // Find support levels between price and SL (i.e., slPrice < supportPrice < price)
+      const supportsBetween = srContext.keyLevels.filter(
+        l => l.type === 'support' && l.price > finalSl && l.price < price
+      );
+      if (supportsBetween.length > 0) {
+        // Take the nearest support to price (highest support between sl and price)
+        const nearestSupport = supportsBetween.reduce((a, b) => a.price > b.price ? a : b);
+        const adjustedSl = parseFloat((nearestSupport.price - buffer).toFixed(5));
+        if (adjustedSl < finalSl || (adjustedSl > finalSl && adjustedSl < price)) {
+          finalSl = adjustedSl;
+          console.log(
+            `[MarketAnalyzerAgent] SL snapped below support ${nearestSupport.price} → ${finalSl}`
+          );
+        }
+      }
+
+      // Check if TP is blocked by a strong/moderate resistance between price and TP
+      if (finalTp !== null && finalTp > price) {
+        const blockingResistances = srContext.keyLevels.filter(
+          l => l.type === 'resistance' &&
+          l.price > price &&
+          l.price < finalTp! &&
+          (l.strength === 'strong' || l.strength === 'moderate') &&
+          (l.price - price) / (finalTp! - price) < 0.6  // within 60% of TP distance
+        );
+        if (blockingResistances.length > 0) {
+          const nearest = blockingResistances.reduce((a, b) => a.price < b.price ? a : b);
+          srWarning = `TP ${finalTp} may be blocked by ${nearest.strength} resistance at ${nearest.price} (${nearest.source})`;
+        }
+      }
+    } else {
+      // SELL: find resistance levels between SL and price (price < resistancePrice < slPrice)
+      const resistancesBetween = srContext.keyLevels.filter(
+        l => l.type === 'resistance' && l.price < finalSl && l.price > price
+      );
+      if (resistancesBetween.length > 0) {
+        const nearestResistance = resistancesBetween.reduce((a, b) => a.price < b.price ? a : b);
+        const adjustedSl = parseFloat((nearestResistance.price + buffer).toFixed(5));
+        if (adjustedSl > finalSl || (adjustedSl < finalSl && adjustedSl > price)) {
+          finalSl = adjustedSl;
+          console.log(
+            `[MarketAnalyzerAgent] SL snapped above resistance ${nearestResistance.price} → ${finalSl}`
+          );
+        }
+      }
+
+      // Check if TP is blocked by a strong/moderate support between price and TP
+      if (finalTp !== null && finalTp < price) {
+        const blockingSupports = srContext.keyLevels.filter(
+          l => l.type === 'support' &&
+          l.price < price &&
+          l.price > finalTp! &&
+          (l.strength === 'strong' || l.strength === 'moderate') &&
+          (price - l.price) / (price - finalTp!) < 0.6
+        );
+        if (blockingSupports.length > 0) {
+          const nearest = blockingSupports.reduce((a, b) => a.price > b.price ? a : b);
+          srWarning = `TP ${finalTp} may be blocked by ${nearest.strength} support at ${nearest.price} (${nearest.source})`;
+        }
+      }
+    }
+
+    return { finalSl, finalTp, srWarning };
   }
 }
