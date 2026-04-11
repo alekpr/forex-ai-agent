@@ -404,7 +404,7 @@ Respond in JSON:
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 700,
+      max_tokens: 1500,
       messages: [{ role: 'user', content: prompt }],
     });
 
