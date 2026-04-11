@@ -173,10 +173,10 @@ export function formatDailyOutlook(outlooks: DailyOutlookData[]): string {
     const supportStr    = sPrice ? escape(sPrice.toFixed(5)) : '—';
 
     const analysisStr = o.aiAnalysis
-      ? escapeRaw(truncate(stripMarkdown(o.aiAnalysis), 400))
+      ? escapeRaw(stripMarkdown(o.aiAnalysis))
       : '';
     const planStr = o.tradingPlan
-      ? escapeRaw(truncate(stripMarkdown(o.tradingPlan), 500))
+      ? escapeRaw(stripMarkdown(o.tradingPlan))
       : '';
 
     return [
