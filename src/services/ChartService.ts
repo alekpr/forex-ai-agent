@@ -299,6 +299,7 @@ export class ChartService {
         },
         scales: {
           x: {
+            grouped: false, // overlay wick + body at same x position (candlestick)
             ticks: {
               color: '#607d8b',
               font: { size: 9 },
@@ -314,7 +315,7 @@ export class ChartService {
             min: minP - pad,
             max: maxP + pad,
           },
-        },
+        } as any,
       },
     };
 
