@@ -121,9 +121,11 @@ export class DailyOutlookAgent {
     const atr4h = snap4h?.atr_14 ?? null;
     const { primaryZone, secondaryZone } = this.computePullbackZones(currentPrice, snap4h ?? null, atr4h);
 
-    // S/R from D1 candles (macro pivots and swings)
-    const srContext = d1Candles.length >= 10
-      ? this.indicatorSvc.computeSupportResistance(d1Candles, currentPrice, symbol)
+    // S/R from 4H candles — tighter precision for intraday pullback planning
+    // (D1 S/R is too wide for 15m entry; 4H levels are within ±10–20 pips of entry zone)
+    const h4Candles = candlesByTf['4h'] ?? [];
+    const srContext = h4Candles.length >= 10
+      ? this.indicatorSvc.computeSupportResistance(h4Candles, currentPrice, symbol)
       : { pivotPoint: null, pivotResistances: [null, null, null] as [null, null, null], pivotSupports: [null, null, null] as [null, null, null], swingHighs: [], swingLows: [], roundLevels: [], keyLevels: [] };
 
     const adxValue = snap4h?.adx_14 ?? null;

@@ -292,8 +292,8 @@ Computed on D1 (macro trend) and 4H (primary trend) using the same EMA-stack + s
 | **Primary** | EMA14 (4H) ± 0.5 × ATR14 | Frequent, shallower pullbacks |
 | **Secondary** | EMA60 (4H) ± 1.0 × ATR14 | Deeper, higher-conviction entries |
 
-### Step 6 — S/R from D1 Candles
-Calls `IndicatorService.computeSupportResistance()` on the full D1 candle series to produce macro pivot points, swing highs/lows, and round levels.
+### Step 6 — S/R from 4H Candles
+Calls `IndicatorService.computeSupportResistance()` on the **4H candle series** (not D1) to produce intraday-relevant pivot points, swing highs/lows, and round levels. 4H S/R produces levels spaced ~10–20 pips apart — appropriate precision for 15m entry planning. D1 S/R levels are typically 50–100+ pips wide and only useful as macro barriers, not pullback targets.
 
 ### Step 7 — Claude AI Synthesis
 `ClaudeAiService.generateDailyOutlook()` receives the full multi-TF indicator snapshot, S/R context, pullback zones, and risk level. It returns:
