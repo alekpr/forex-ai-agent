@@ -67,8 +67,11 @@ export class AlertRepository {
       alert_interval_minutes: number;
       risk_level: string;
       confidence_threshold: string;
+      candle_refresh_enabled: boolean;
+      candle_refresh_interval_minutes: number;
     }>(
-      `SELECT alert_enabled, alert_interval_minutes, risk_level, confidence_threshold
+      `SELECT alert_enabled, alert_interval_minutes, risk_level, confidence_threshold,
+              candle_refresh_enabled, candle_refresh_interval_minutes
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -79,6 +82,8 @@ export class AlertRepository {
       alertIntervalMinutes: row.alert_interval_minutes,
       riskLevel: row.risk_level as 'low' | 'medium' | 'high',
       confidenceThreshold: parseFloat(row.confidence_threshold),
+      candleRefreshEnabled: row.candle_refresh_enabled ?? true,
+      candleRefreshIntervalMinutes: row.candle_refresh_interval_minutes ?? 15,
     };
   }
 
@@ -102,6 +107,14 @@ export class AlertRepository {
     if (settings.confidenceThreshold !== undefined) {
       fields.push(`confidence_threshold = $${idx++}`);
       values.push(settings.confidenceThreshold);
+    }
+    if (settings.candleRefreshEnabled !== undefined) {
+      fields.push(`candle_refresh_enabled = $${idx++}`);
+      values.push(settings.candleRefreshEnabled);
+    }
+    if (settings.candleRefreshIntervalMinutes !== undefined) {
+      fields.push(`candle_refresh_interval_minutes = $${idx++}`);
+      values.push(settings.candleRefreshIntervalMinutes);
     }
 
     if (fields.length === 0) return;

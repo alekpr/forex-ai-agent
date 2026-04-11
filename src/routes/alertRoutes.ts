@@ -13,6 +13,8 @@ const updateSettingsSchema = z.object({
   alertIntervalMinutes: z.number().int().min(5).max(1440).optional(),
   riskLevel: z.enum(['low', 'medium', 'high']).optional(),
   confidenceThreshold: z.number().min(0.5).max(1.0).optional(),
+  candleRefreshEnabled: z.boolean().optional(),
+  candleRefreshIntervalMinutes: z.number().int().min(5).max(1440).optional(),
 });
 
 // GET /api/alerts/settings
@@ -24,8 +26,10 @@ router.get('/settings', async (_req: Request, res: Response): Promise<void> => {
   }
   res.json({
     ...settings,
-    schedulerRunning: scheduler.isRunning(),
-    currentInterval: scheduler.getInterval(),
+    alertSchedulerRunning: scheduler.isAlertRunning(),
+    alertCurrentInterval: scheduler.getAlertInterval(),
+    candleRefreshSchedulerRunning: scheduler.isCandleRefreshRunning(),
+    candleRefreshCurrentInterval: scheduler.getCandleRefreshInterval(),
   });
 });
 
@@ -39,19 +43,33 @@ router.put('/settings', async (req: Request, res: Response): Promise<void> => {
 
   await alertRepo.updateSettings(env.DEFAULT_USER_ID, parsed.data);
 
-  // Start/stop scheduler based on alertEnabled flag
-  const { alertEnabled, alertIntervalMinutes } = parsed.data;
+  const { alertEnabled, alertIntervalMinutes, candleRefreshEnabled, candleRefreshIntervalMinutes } = parsed.data;
+
+  // Alert scheduler
   if (alertEnabled === true) {
-    const interval = alertIntervalMinutes ?? scheduler.getInterval();
-    scheduler.start(interval);
+    scheduler.startAlerts(alertIntervalMinutes ?? scheduler.getAlertInterval());
   } else if (alertEnabled === false) {
-    scheduler.stop();
-  } else if (alertIntervalMinutes !== undefined && scheduler.isRunning()) {
-    scheduler.start(alertIntervalMinutes);
+    scheduler.stopAlerts();
+  } else if (alertIntervalMinutes !== undefined && scheduler.isAlertRunning()) {
+    scheduler.startAlerts(alertIntervalMinutes);
+  }
+
+  // Candle refresh scheduler
+  if (candleRefreshEnabled === true) {
+    scheduler.startCandleRefresh(candleRefreshIntervalMinutes ?? scheduler.getCandleRefreshInterval());
+  } else if (candleRefreshEnabled === false) {
+    scheduler.stopCandleRefresh();
+  } else if (candleRefreshIntervalMinutes !== undefined && scheduler.isCandleRefreshRunning()) {
+    scheduler.startCandleRefresh(candleRefreshIntervalMinutes);
   }
 
   const updated = await alertRepo.getSettings(env.DEFAULT_USER_ID);
-  res.json({ success: true, settings: updated, schedulerRunning: scheduler.isRunning() });
+  res.json({
+    success: true,
+    settings: updated,
+    alertSchedulerRunning: scheduler.isAlertRunning(),
+    candleRefreshSchedulerRunning: scheduler.isCandleRefreshRunning(),
+  });
 });
 
 export default router;

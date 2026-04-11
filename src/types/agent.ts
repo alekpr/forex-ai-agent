@@ -43,4 +43,6 @@ export interface AlertSettings {
   alertIntervalMinutes: number;
   riskLevel: 'low' | 'medium' | 'high';
   confidenceThreshold: number;
+  candleRefreshEnabled: boolean;
+  candleRefreshIntervalMinutes: number;
 }

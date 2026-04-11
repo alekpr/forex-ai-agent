@@ -4,54 +4,99 @@ import { CandleRefreshService } from './CandleRefreshService';
 import { env } from '../config/env';
 
 export class SchedulerService {
-  private task: ScheduledTask | null = null;
+  private alertTask: ScheduledTask | null = null;
+  private candleTask: ScheduledTask | null = null;
   private readonly agent: AutoAlertAgent;
   private readonly candleRefresh: CandleRefreshService;
-  private currentInterval: number;
+  private currentAlertInterval: number;
+  private currentCandleInterval: number;
 
   constructor() {
     this.agent = new AutoAlertAgent();
     this.candleRefresh = new CandleRefreshService();
-    this.currentInterval = 15; // default 15 minutes
+    this.currentAlertInterval = 15;
+    this.currentCandleInterval = 15;
   }
 
-  start(intervalMinutes: number): void {
-    this.stop(); // stop existing job if running
-    this.currentInterval = intervalMinutes;
+  // ─── Alert scheduler ───────────────────────────────────────────────────────
 
-    // node-cron expression: every N minutes (supports 1,5,10,15,30,60 etc.)
+  startAlerts(intervalMinutes: number): void {
+    this.stopAlerts();
+    this.currentAlertInterval = intervalMinutes;
     const expression = `*/${intervalMinutes} * * * *`;
-
     if (!cron.validate(expression)) {
-      throw new Error(`Invalid cron expression for interval ${intervalMinutes} minutes`);
+      throw new Error(`Invalid cron expression for alert interval ${intervalMinutes} minutes`);
     }
-
-    const symbols = env.CANDLE_SYMBOLS.split(',').map((s) => s.trim()).filter(Boolean);
-
-    this.task = cron.schedule(expression, async () => {
-      console.log(`[Scheduler] Running candle refresh + alert scan (every ${intervalMinutes}min)...`);
-      // Refresh candles first so alert scan uses up-to-date data
-      await this.candleRefresh.refresh(symbols);
+    this.alertTask = cron.schedule(expression, async () => {
+      console.log(`[Scheduler] Running alert scan (every ${intervalMinutes}min)...`);
       await this.agent.runScan();
     });
-
-    console.log(`[Scheduler] Started — scanning every ${intervalMinutes} minutes`);
+    console.log(`[Scheduler] Alert scan started — every ${intervalMinutes} minutes`);
   }
 
-  stop(): void {
-    if (this.task) {
-      this.task.stop();
-      this.task = null;
-      console.log('[Scheduler] Stopped');
+  stopAlerts(): void {
+    if (this.alertTask) {
+      this.alertTask.stop();
+      this.alertTask = null;
+      console.log('[Scheduler] Alert scan stopped');
     }
+  }
+
+  isAlertRunning(): boolean {
+    return this.alertTask !== null;
+  }
+
+  getAlertInterval(): number {
+    return this.currentAlertInterval;
+  }
+
+  // ─── Candle refresh scheduler ──────────────────────────────────────────────
+
+  startCandleRefresh(intervalMinutes: number): void {
+    this.stopCandleRefresh();
+    this.currentCandleInterval = intervalMinutes;
+    const expression = `*/${intervalMinutes} * * * *`;
+    if (!cron.validate(expression)) {
+      throw new Error(`Invalid cron expression for candle interval ${intervalMinutes} minutes`);
+    }
+    const symbols = env.CANDLE_SYMBOLS.split(',').map((s) => s.trim()).filter(Boolean);
+    this.candleTask = cron.schedule(expression, async () => {
+      console.log(`[Scheduler] Running candle refresh (every ${intervalMinutes}min)...`);
+      await this.candleRefresh.refresh(symbols);
+    });
+    console.log(`[Scheduler] Candle refresh started — every ${intervalMinutes} minutes`);
+  }
+
+  stopCandleRefresh(): void {
+    if (this.candleTask) {
+      this.candleTask.stop();
+      this.candleTask = null;
+      console.log('[Scheduler] Candle refresh stopped');
+    }
+  }
+
+  isCandleRefreshRunning(): boolean {
+    return this.candleTask !== null;
+  }
+
+  getCandleRefreshInterval(): number {
+    return this.currentCandleInterval;
+  }
+
+  // ─── Legacy helpers (stop all) ─────────────────────────────────────────────
+
+  stop(): void {
+    this.stopAlerts();
+    this.stopCandleRefresh();
   }
 
   isRunning(): boolean {
-    return this.task !== null;
+    return this.isAlertRunning() || this.isCandleRefreshRunning();
   }
 
+  /** @deprecated use getAlertInterval() */
   getInterval(): number {
-    return this.currentInterval;
+    return this.currentAlertInterval;
   }
 
   getCandleRefreshService(): CandleRefreshService {

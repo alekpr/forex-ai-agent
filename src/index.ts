@@ -53,11 +53,15 @@ async function startServer(): Promise<void> {
     console.warn('⚠️  Initial candle refresh failed:', (err as Error).message)
   );
 
-  // Auto-start scheduler if alerts are enabled
+  // Auto-start schedulers independently based on their own settings
   const alertRepo = new AlertRepository();
   const settings = await alertRepo.getSettings(env.DEFAULT_USER_ID).catch(() => null);
+
+  if (settings?.candleRefreshEnabled) {
+    scheduler.startCandleRefresh(settings.candleRefreshIntervalMinutes);
+  }
   if (settings?.alertEnabled) {
-    scheduler.start(settings.alertIntervalMinutes);
+    scheduler.startAlerts(settings.alertIntervalMinutes);
   }
 
   const server = app.listen(env.PORT, () => {
