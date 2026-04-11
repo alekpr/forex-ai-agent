@@ -89,21 +89,25 @@ export class TelegramBotService {
     this.bot.command('outlook', async (ctx) => {
       if (!this.isAllowed(ctx)) return;
       await ctx.reply('⏳ กำลังสร้าง Daily Outlook อาจใช้เวลา 30–60 วินาที…');
-      try {
-        const settings = await this.alertRepo.getSettings(env.DEFAULT_USER_ID);
-        const rawSymbols = settings?.dailyOutlookSymbols ?? env.CANDLE_SYMBOLS;
-        const symbols = rawSymbols.split(',').map((s) => s.trim()).filter(Boolean);
-        const results = await this.outlookAgent.generateOutlook(env.DEFAULT_USER_ID, symbols);
-        if (!results.length) {
-          await ctx.reply('⚠️ ไม่สามารถสร้าง outlook ได้ (ข้อมูลเปลี่ยนอาจล้าสมัย)');
-          return;
+      // Fire-and-forget: do NOT await heavy work so the webhook returns HTTP 200
+      // to Telegram immediately — prevents Telegram from retrying and sending duplicates.
+      setImmediate(async () => {
+        try {
+          const settings = await this.alertRepo.getSettings(env.DEFAULT_USER_ID);
+          const rawSymbols = settings?.dailyOutlookSymbols ?? env.CANDLE_SYMBOLS;
+          const symbols = rawSymbols.split(',').map((s) => s.trim()).filter(Boolean);
+          const results = await this.outlookAgent.generateOutlook(env.DEFAULT_USER_ID, symbols);
+          if (!results.length) {
+            await ctx.reply('⚠️ ไม่สามารถสร้าง outlook ได้ (ข้อมูลเปลี่ยนอาจล้าสมัย)');
+            return;
+          }
+          // processSymbol() already sent per-symbol photo+text via broadcastDailyOutlook
+          await ctx.reply(`✅ ส่ง Daily Outlook ${results.length} คู่เงินเรียบร้อยแล้ว`);
+        } catch (err) {
+          console.error('[TelegramBot] /outlook error:', err);
+          await ctx.reply('⚠️ เกิดข้อผิดพลาดในการสร้าง outlook กรุณาลองใหม่');
         }
-        // processSymbol() already sent per-symbol photo+text via broadcastDailyOutlook
-        await ctx.reply(`✅ ส่ง Daily Outlook ${results.length} คู่เงินเรียบร้อยแล้ว`);
-      } catch (err) {
-        console.error('[TelegramBot] /outlook error:', err);
-        await ctx.reply('⚠️ เกิดข้อผิดพลาดในการสร้าง outlook กรุณาลองใหม่');
-      }
+      });
     });
 
     this.bot.command('settings', async (ctx) => {
