@@ -460,13 +460,10 @@ export class TelegramBotService {
   /**
    * Send a MarkdownV2 message, automatically splitting at newline boundaries
    * when the text exceeds Telegram's 4096-character per-message limit.
+   * Falls back to plain text if MarkdownV2 parsing fails.
    */
   private async replyMarkdownV2Safe(ctx: Context<Update>, text: string): Promise<void> {
     const LIMIT = 4096;
-    if (text.length <= LIMIT) {
-      await ctx.replyWithMarkdownV2(text);
-      return;
-    }
 
     // Split into chunks at newline boundaries without exceeding the limit
     const chunks: string[] = [];
@@ -481,7 +478,13 @@ export class TelegramBotService {
     if (remaining) chunks.push(remaining);
 
     for (const chunk of chunks) {
-      await ctx.replyWithMarkdownV2(chunk);
+      try {
+        await ctx.replyWithMarkdownV2(chunk);
+      } catch {
+        // MarkdownV2 parse error — strip all escape backslashes and send as plain text
+        const plain = chunk.replace(/\\([_*[\]()~`>#+\-=|{}.!])/g, '$1');
+        await ctx.reply(plain);
+      }
     }
   }
 

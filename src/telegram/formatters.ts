@@ -167,7 +167,7 @@ export function formatTradeSummary(
   const statsMsg = lines.join('\n');
 
   const aiMsg = aiSummary
-    ? `🤖 *AI วิเคราะห์*\n\n${escapeRaw(stripMarkdown(aiSummary))}`
+    ? `🤖 *AI วิเคราะห์*\n\n${escapeRaw(truncate(stripMarkdown(aiSummary), 3000))}`
     : '';
 
   return [statsMsg, aiMsg];
