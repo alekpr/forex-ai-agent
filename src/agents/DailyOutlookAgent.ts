@@ -92,7 +92,9 @@ export class DailyOutlookAgent {
       const cachedCaption = cachedChart
         ? `${symbol} 4H | Bias: ${biasLabel} | ${new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'short' })} (แคช)`
         : undefined;
-      await this.notificationSvc.broadcastDailyOutlook(cached.telegram_message_text, cachedChart, cachedCaption);
+      // Regenerate text from rowData so any stale/corrupt cached text is not replayed
+      const freshText = formatDailyOutlook([rowData]);
+      await this.notificationSvc.broadcastDailyOutlook(freshText, cachedChart, cachedCaption);
       return rowData;
     }
 
