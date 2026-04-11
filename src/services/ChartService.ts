@@ -52,7 +52,7 @@ export class ChartService {
   }
 
   async renderOutlookChart(candles: OHLCCandle[], outlook: DailyOutlookData): Promise<Buffer> {
-    const slice = candles.slice(-80);
+    const slice = candles.slice(-60); // 60 × 4H ≈ 10 days — clear candlestick view
 
     const labels = slice.map((c) =>
       new Date(c.time).toLocaleString('en-GB', {
@@ -65,9 +65,17 @@ export class ChartService {
       })
     );
 
-    const closes = slice.map((c) => c.close);
+    // ── Candle colours ────────────────────────────────────────────────────────
+    const BULL  = '#26a69a';
+    const BEAR  = '#ef5350';
+    const DOJI  = '#b0bec5';
+    const candleColour = (c: OHLCCandle) =>
+      Math.abs(c.close - c.open) < (c.high - c.low) * 0.1 ? DOJI
+        : c.close >= c.open ? BULL : BEAR;
+    const bodyColours = slice.map(c => candleColour(c) + 'cc'); // semi-transparent body
+    const wickColours = slice.map(c => candleColour(c));
 
-    // ── EMA values (latest value replicated as flat reference line) ───────────
+    // ── EMA values ────────────────────────────────────────────────────────────
     const snap4h   = outlook.indicators['4h'];
     const ema14val = snap4h?.ema_14 ?? null;
     const ema60val = snap4h?.ema_60 ?? null;
@@ -78,32 +86,48 @@ export class ChartService {
     const pz = outlook.primaryZone;
     const sz = outlook.secondaryZone;
 
-    // ── S/R key levels ────────────────────────────────────────────────────────
+    // ── S/R key levels (fall back to Claude-stored levels if keyLevels empty) ─
     const resistances = outlook.srContext.keyLevels
       .filter((l) => l.type === 'resistance').slice(0, 3);
     const supports = outlook.srContext.keyLevels
       .filter((l) => l.type === 'support').slice(0, 3);
+    if (resistances.length === 0 && outlook.keyResistance != null) {
+      resistances.push({ type: 'resistance', price: outlook.keyResistance, strength: 'moderate', source: 'swing' });
+    }
+    if (supports.length === 0 && outlook.keySupport != null) {
+      supports.push({ type: 'support', price: outlook.keySupport, strength: 'moderate', source: 'swing' });
+    }
 
     // ── Bias colour ───────────────────────────────────────────────────────────
     const biasColour =
-      outlook.bias === 'BUY'  ? '#26a69a' :
-      outlook.bias === 'SELL' ? '#ef5350' :
-      '#b0bec5';
+      outlook.bias === 'BUY'  ? BULL :
+      outlook.bias === 'SELL' ? BEAR : '#b0bec5';
 
     // ── Datasets ──────────────────────────────────────────────────────────────
     const datasets: ChartConfiguration['data']['datasets'] = [];
 
-    // Close price area (main line)
+    // Candlestick wicks — thin floating bar [low, high]
     datasets.push({
-      type: 'line',
-      label: `${outlook.symbol} Close`,
-      data: closes,
-      borderColor: '#90a4ae',
-      borderWidth: 1.5,
-      pointRadius: 0,
-      tension: 0.2,
-      fill: false,
+      type: 'bar',
+      label: '_wick',
+      data: slice.map(c => [c.low, c.high]),
+      backgroundColor: wickColours,
+      borderColor: wickColours,
+      borderWidth: 0,
+      barThickness: 2,
       order: 1,
+    } as any);
+
+    // Candlestick bodies — wider floating bar [min(open,close), max(open,close)]
+    datasets.push({
+      type: 'bar',
+      label: `${outlook.symbol} OHLC`,
+      data: slice.map(c => [Math.min(c.open, c.close), Math.max(c.open, c.close)]),
+      backgroundColor: bodyColours,
+      borderColor: wickColours,
+      borderWidth: 1,
+      barThickness: 8,
+      order: 0,
     } as any);
 
     // EMA14 line
@@ -138,7 +162,7 @@ export class ChartService {
       } as any);
     }
 
-    // Primary pullback zone band (EMA14 ± 0.5×ATR)
+    // Primary pullback zone band
     if (pz) {
       datasets.push({
         type: 'line',
@@ -165,7 +189,7 @@ export class ChartService {
       } as any);
     }
 
-    // Secondary pullback zone band (EMA60 ± 1×ATR)
+    // Secondary pullback zone band
     if (sz) {
       datasets.push({
         type: 'line',
@@ -249,7 +273,7 @@ export class ChartService {
     const titleText = `${outlook.symbol} 4H  —  Bias: ${biasLabel}${adxLabel}`;
 
     const config: ChartConfiguration = {
-      type: 'line',
+      type: 'bar',
       data: { labels, datasets },
       options: {
         responsive: false,
