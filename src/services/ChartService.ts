@@ -11,10 +11,20 @@ import {
   Filler,
   ChartConfiguration,
 } from 'chart.js';
-import { CandlestickController, CandlestickElement, OhlcElement } from 'chartjs-chart-financial';
 import { OHLCCandle, DailyOutlookData } from '../types/market';
 
-// Register Chart.js components + financial plugin
+// chartjs-chart-financial is ESM-only; loaded via dynamic import() at runtime
+// to avoid ERR_REQUIRE_ESM when the project is compiled to CommonJS.
+let financialPluginRegistered = false;
+async function ensureFinancialPlugin(): Promise<void> {
+  if (financialPluginRegistered) return;
+  const { CandlestickController, CandlestickElement, OhlcElement } =
+    await import('chartjs-chart-financial');
+  Chart.register(CandlestickController, CandlestickElement, OhlcElement);
+  financialPluginRegistered = true;
+}
+
+// Register Chart.js core components (synchronous — all CJS-compatible)
 Chart.register(
   CategoryScale,
   LinearScale,
@@ -24,9 +34,6 @@ Chart.register(
   Tooltip,
   Legend,
   Filler,
-  CandlestickController,
-  CandlestickElement,
-  OhlcElement,
 );
 
 const CHART_WIDTH  = 1200;
@@ -48,6 +55,9 @@ export class ChartService {
   }
 
   async renderOutlookChart(candles: OHLCCandle[], outlook: DailyOutlookData): Promise<Buffer> {
+    // Ensure the ESM-only financial plugin is loaded before rendering
+    await ensureFinancialPlugin();
+
     // Use the last 80 candles to keep the chart readable
     const slice = candles.slice(-80);
 
