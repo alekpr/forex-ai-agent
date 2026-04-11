@@ -82,3 +82,29 @@ export interface TrendConfluenceResult {
   /** Entry-timing analysis on the entry timeframe */
   entrySetup: EntrySetupQuality;
 }
+
+// ─── Support / Resistance Types ───────────────────────────────────────────────
+
+export type SRLevel = {
+  price: number;
+  type: 'support' | 'resistance';
+  source: 'pivot' | 'swing' | 'round';
+  strength: 'strong' | 'moderate' | 'weak';
+};
+
+export interface SRContext {
+  /** Classic pivot point (PP) derived from previous candle */
+  pivotPoint: number | null;
+  /** Pivot resistance levels R1, R2, R3 */
+  pivotResistances: [number | null, number | null, number | null];
+  /** Pivot support levels S1, S2, S3 */
+  pivotSupports: [number | null, number | null, number | null];
+  /** Significant swing highs (recent N candles) */
+  swingHighs: number[];
+  /** Significant swing lows (recent N candles) */
+  swingLows: number[];
+  /** Nearest round-number levels above and below current price */
+  roundLevels: number[];
+  /** Merged & de-duplicated ranked list of all S/R levels near current price */
+  keyLevels: SRLevel[];
+}

@@ -99,6 +99,12 @@ export class MarketAnalyzerAgent {
       const winRate = this.vectorSearch.calcWinRate(similarTrades);
 
       // Step 4: Claude AI synthesis (with trend context + DB candle context enrichment)
+      // Compute S/R from the entry timeframe candles
+      const entryCandlesForSR = candlesByTf[timeframe as Timeframe] ?? [];
+      const srContext = entryCandlesForSR.length >= 10
+        ? this.indicatorSvc.computeSupportResistance(entryCandlesForSR, currentPrice, symbol)
+        : undefined;
+
       const aiResult = await this.claudeSvc.generateAnalysisRecommendation(
         symbol,
         timeframe,
@@ -107,7 +113,8 @@ export class MarketAnalyzerAgent {
         similarTrades,
         riskLevel,
         trendContext,
-        candleContext
+        candleContext,
+        srContext
       );
 
       // Step 5: Re-evaluate confluence with the direction Claude returned

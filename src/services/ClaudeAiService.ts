@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env';
-import { MultiTimeframeIndicators, TrendConfluenceResult, Timeframe } from '../types/market';
+import { MultiTimeframeIndicators, TrendConfluenceResult, Timeframe, SRContext } from '../types/market';
 import { CreateTradeLogInput, TradeLog, CloseTradeInput, TradeResultRecord, SimilarTrade } from '../types/trade';
 import { CandleContext } from './CandleService';
 
@@ -126,7 +126,8 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
     similarTrades: SimilarTrade[],
     riskLevel: string,
     trendContext: TrendConfluenceResult,
-    candleContext?: CandleContext
+    candleContext?: CandleContext,
+    srContext?: SRContext
   ): Promise<{
     recommendation: string;
     confidence: number;
@@ -170,6 +171,11 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
     const atrSlRange = entryTfAtr
       ? `${(entryTfAtr * 1.0).toFixed(5)}–${(entryTfAtr * 1.5).toFixed(5)}`
       : 'N/A';
+
+    // S/R context section
+    const srSection = srContext
+      ? this.formatSRForPrompt(srContext, currentPrice)
+      : '';
     // Bangkok datetime + trading session
     const bangkokNow = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok', hour12: false }).replace(' ', 'T') + '+07:00';
     const session = getTradingSession();
@@ -194,6 +200,7 @@ ${trendContext.confluenceSummary}
 **Current Technical Indicators (Multi-timeframe):**
 ${indicatorSummary}
 ${candleContextSection}
+${srSection}
 **Similar Historical Trades (Vector Similarity Search):**
 ${similarTradesSummary}
 Historical Win Rate from similar setups: ${winRate}%
@@ -294,6 +301,29 @@ Be conservative with confidence scores. Only recommend BUY/SELL if conviction is
       );
     }
     return lines.join('\n');
+  }
+
+  private formatSRForPrompt(sr: SRContext, currentPrice: number): string {
+    const fmt = (n: number | null) => n !== null ? n.toFixed(5) : 'N/A';
+
+    const nearestR = sr.keyLevels.filter(l => l.type === 'resistance').slice(0, 3);
+    const nearestS = sr.keyLevels.filter(l => l.type === 'support').slice(0, 3);
+
+    const rLines = nearestR.map(l => `  R ${fmt(l.price)} [${l.source}, ${l.strength}]`).join('\n') || '  (ไม่พบ)';
+    const sLines = nearestS.map(l => `  S ${fmt(l.price)} [${l.source}, ${l.strength}]`).join('\n') || '  (ไม่พบ)';
+
+    const ppLine = sr.pivotPoint ? `Pivot Point: ${fmt(sr.pivotPoint)}` : '';
+
+    return `
+**Support & Resistance (Current Price: ${currentPrice.toFixed(5)}):**
+${ppLine}
+Nearest Resistance:
+${rLines}
+Nearest Support:
+${sLines}
+Swing Highs: ${sr.swingHighs.slice(-3).map(fmt).join(' | ') || 'N/A'}
+Swing Lows:  ${sr.swingLows.slice(-3).map(fmt).join(' | ') || 'N/A'}
+Round Levels near price: ${sr.roundLevels.filter(r => Math.abs(r - currentPrice) < Math.abs(currentPrice * 0.005)).map(fmt).join(' | ') || 'N/A'}`;
   }
 
   private calcRR(trade: CreateTradeLogInput): string {
