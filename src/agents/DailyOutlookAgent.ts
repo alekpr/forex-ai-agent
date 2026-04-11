@@ -74,8 +74,26 @@ export class DailyOutlookAgent {
     const cached = await this.outlookRepo.findToday(userId, symbol);
     if (cached?.is_sent && cached.telegram_message_text) {
       console.log(`[DailyOutlookAgent] ${symbol}: using cached outlook from today`);
-      await this.notificationSvc.broadcastDailyOutlook(cached.telegram_message_text);
-      return this.rowToData(cached);
+      const rowData = this.rowToData(cached);
+      // Try to render chart from fresh 4H candles even for cached runs
+      let cachedChart: Buffer | undefined;
+      try {
+        const { candlesByTf: ctf } = await this.candleSvc.getMultiTimeframeCandles(
+          symbol, ['4h'], 80, undefined, false
+        );
+        const ctfH4 = ctf['4h'] ?? [];
+        if (ctfH4.length > 0) {
+          cachedChart = await this.chartSvc.renderOutlookChart(ctfH4, rowData);
+        }
+      } catch (err) {
+        console.error(`[DailyOutlookAgent] Cached chart render failed for ${symbol}:`, (err as Error).message);
+      }
+      const biasLabel = rowData.bias ?? 'NEUTRAL';
+      const cachedCaption = cachedChart
+        ? `${symbol} 4H | Bias: ${biasLabel} | ${new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'short' })} (แคช)`
+        : undefined;
+      await this.notificationSvc.broadcastDailyOutlook(cached.telegram_message_text, cachedChart, cachedCaption);
+      return rowData;
     }
 
     // Fetch candles for 1h, 4h, 1d
@@ -158,6 +176,8 @@ export class DailyOutlookAgent {
       adxValue,
       indicators,
       bias: claudeResult.bias,
+      keyResistance: claudeResult.keyResistance ?? nearestR?.price ?? null,
+      keySupport: claudeResult.keySupport ?? nearestS?.price ?? null,
       aiAnalysis: claudeResult.analysis,
       tradingPlan: claudeResult.tradingPlan,
     };
@@ -265,6 +285,8 @@ export class DailyOutlookAgent {
       adxValue: row.adx_value ? parseFloat(row.adx_value) : null,
       indicators: {},
       bias: (row.bias ?? 'NEUTRAL') as 'BUY' | 'SELL' | 'NEUTRAL',
+      keyResistance: row.key_resistance ? parseFloat(row.key_resistance) : null,
+      keySupport: row.key_support ? parseFloat(row.key_support) : null,
       aiAnalysis: row.ai_analysis ?? undefined,
       tradingPlan: row.trading_plan ?? undefined,
       telegramMessageText: row.telegram_message_text ?? undefined,

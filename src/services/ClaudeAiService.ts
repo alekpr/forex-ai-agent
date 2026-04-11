@@ -409,7 +409,11 @@ Respond in JSON:
     });
 
     const rawText = this.extractText(response);
-    const text = rawText.replace(/```(?:json)?\s*/gi, '').trim();
+    // Strip ALL backtick code fences — both opening (```json) and closing (```)
+    const text = rawText
+      .replace(/```(?:json)?\s*/gi, '')
+      .replace(/```/g, '')
+      .trim();
 
     try {
       const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -429,8 +433,8 @@ Respond in JSON:
           tradingPlan: parsed.trading_plan ?? '',
         };
       }
-    } catch {
-      // fallback
+    } catch (err) {
+      console.error('[ClaudeAiService] generateDailyOutlook JSON parse failed:', (err as Error).message, '\nRaw:', text.slice(0, 300));
     }
 
     return {

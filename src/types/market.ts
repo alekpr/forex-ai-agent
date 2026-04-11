@@ -142,6 +142,10 @@ export interface DailyOutlookData {
   indicators: MultiTimeframeIndicators;
   /** Claude's directional bias for the day */
   bias?: 'BUY' | 'SELL' | 'NEUTRAL';
+  /** Nearest resistance from Claude's analysis (fallback when srContext.keyLevels is empty) */
+  keyResistance?: number | null;
+  /** Nearest support from Claude's analysis (fallback when srContext.keyLevels is empty) */
+  keySupport?: number | null;
   /** Claude narrative analysis in Thai */
   aiAnalysis?: string;
   /** Claude actionable trading plan in Thai */

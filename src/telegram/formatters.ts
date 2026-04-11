@@ -166,8 +166,11 @@ export function formatDailyOutlook(outlooks: DailyOutlookData[]): string {
 
     const nearestR = o.srContext.keyLevels.find(l => l.type === 'resistance' && l.price > o.currentPrice);
     const nearestS = o.srContext.keyLevels.find(l => l.type === 'support' && l.price < o.currentPrice);
-    const resistanceStr = nearestR ? escape(nearestR.price.toFixed(5)) : '—';
-    const supportStr = nearestS ? escape(nearestS.price.toFixed(5)) : '—';
+    // Fall back to Claude-provided key levels when srContext.keyLevels is empty
+    const rPrice = nearestR?.price ?? (o.keyResistance && o.keyResistance > o.currentPrice ? o.keyResistance : null);
+    const sPrice = nearestS?.price ?? (o.keySupport && o.keySupport < o.currentPrice ? o.keySupport : null);
+    const resistanceStr = rPrice ? escape(rPrice.toFixed(5)) : '—';
+    const supportStr    = sPrice ? escape(sPrice.toFixed(5)) : '—';
 
     const analysisStr = o.aiAnalysis
       ? escapeRaw(truncate(stripMarkdown(o.aiAnalysis), 400))

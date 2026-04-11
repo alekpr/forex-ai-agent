@@ -16,7 +16,7 @@ import {
   LOG_TRADE_FIELDS, CLOSE_TRADE_FIELDS, ANALYZE_FIELDS,
 } from './ConversationState';
 import { routeMessage } from './IntentRouter';
-import { formatTradeLogged, formatTradeClosed, formatAnalysis, formatOpenTradeItem, formatTradeSummary, formatDailyOutlook } from './formatters';
+import { formatTradeLogged, formatTradeClosed, formatAnalysis, formatOpenTradeItem, formatTradeSummary } from './formatters';
 import { TradeSummaryAgent } from '../agents/TradeSummaryAgent';
 import { parseEntryTime } from '../utils/dateParser';
 
@@ -98,9 +98,8 @@ export class TelegramBotService {
           await ctx.reply('⚠️ ไม่สามารถสร้าง outlook ได้ (ข้อมูลเปลี่ยนอาจล้าสมัย)');
           return;
         }
-        // Agent already broadcasts via NotificationService; also reply in-chat in case chat IDs differ
-        const text = formatDailyOutlook(results);
-        await this.replyMarkdownV2Safe(ctx, text);
+        // processSymbol() already sent per-symbol photo+text via broadcastDailyOutlook
+        await ctx.reply(`✅ ส่ง Daily Outlook ${results.length} คู่เงินเรียบร้อยแล้ว`);
       } catch (err) {
         console.error('[TelegramBot] /outlook error:', err);
         await ctx.reply('⚠️ เกิดข้อผิดพลาดในการสร้าง outlook กรุณาลองใหม่');
