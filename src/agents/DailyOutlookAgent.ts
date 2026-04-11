@@ -3,6 +3,7 @@ import { CandleService } from '../services/CandleService';
 import { IndicatorService } from '../services/IndicatorService';
 import { ClaudeAiService } from '../services/ClaudeAiService';
 import { NotificationService } from '../services/NotificationService';
+import { ChartService } from '../services/ChartService';
 import { DailyOutlookRepository, CreateDailyOutlookInput } from '../repositories/DailyOutlookRepository';
 import { formatDailyOutlook } from '../telegram/formatters';
 import {
@@ -27,6 +28,7 @@ export class DailyOutlookAgent {
   private readonly indicatorSvc: IndicatorService;
   private readonly claudeSvc: ClaudeAiService;
   private readonly notificationSvc: NotificationService;
+  private readonly chartSvc: ChartService;
   private readonly outlookRepo: DailyOutlookRepository;
 
   constructor() {
@@ -34,6 +36,7 @@ export class DailyOutlookAgent {
     this.indicatorSvc = new IndicatorService();
     this.claudeSvc = new ClaudeAiService();
     this.notificationSvc = new NotificationService();
+    this.chartSvc = new ChartService();
     this.outlookRepo = new DailyOutlookRepository();
   }
 
@@ -184,8 +187,17 @@ export class DailyOutlookAgent {
     const id = await this.outlookRepo.create(userId, dbInput);
     await this.outlookRepo.markSent(id, telegramText);
 
-    // Broadcast
-    await this.notificationSvc.broadcastDailyOutlook(telegramText);
+    // Render chart and broadcast
+    let chartBuffer: Buffer | undefined;
+    try {
+      chartBuffer = await this.chartSvc.renderOutlookChart(h4Candles, outlookData);
+    } catch (err) {
+      console.error(`[DailyOutlookAgent] Chart render failed for ${symbol}:`, (err as Error).message);
+    }
+
+    const biasLabel = outlookData.bias ?? 'NEUTRAL';
+    const photoCaption = `${symbol} 4H | Bias: ${biasLabel} | ${new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'short' })}`;
+    await this.notificationSvc.broadcastDailyOutlook(telegramText, chartBuffer, photoCaption);
 
     return { ...outlookData, telegramMessageText: telegramText };
   }

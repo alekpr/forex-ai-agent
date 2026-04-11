@@ -1,4 +1,5 @@
 import axios from 'axios';
+import FormData from 'form-data';
 import { env } from '../config/env';
 
 interface AlertPayload {
@@ -63,13 +64,34 @@ export class NotificationService {
 
   /**
    * Broadcast a daily outlook message to the configured Telegram chat.
-   * Accepts a pre-formatted MarkdownV2 string. Splits at newline boundaries
-   * if longer than Telegram's 4096-char limit. Falls back to plain text on parse error.
+   * If chartBuffer is provided, sends the chart as a photo first with the symbol+bias
+   * as caption, then sends the full analysis text separately.
+   * Splits text at newline boundaries if > 4096 chars. Falls back to plain text on parse error.
    */
-  async broadcastDailyOutlook(markdownV2Text: string): Promise<void> {
+  async broadcastDailyOutlook(markdownV2Text: string, chartBuffer?: Buffer, photoCaption?: string): Promise<void> {
     if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
       console.warn('[NotificationService] Telegram not configured — skipping daily outlook broadcast');
       return;
+    }
+
+    // Send chart image first if provided
+    if (chartBuffer) {
+      try {
+        const form = new FormData();
+        form.append('chat_id', env.TELEGRAM_CHAT_ID);
+        form.append('photo', chartBuffer, { filename: 'outlook.png', contentType: 'image/png' });
+        if (photoCaption) {
+          form.append('caption', photoCaption.slice(0, 1024)); // Telegram caption limit
+        }
+        await axios.post(
+          `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`,
+          form,
+          { headers: form.getHeaders() }
+        );
+      } catch (err) {
+        console.error('[NotificationService] Failed to send chart image:', (err as Error).message);
+        // Continue to send text even if image fails
+      }
     }
 
     const LIMIT = 4096;
