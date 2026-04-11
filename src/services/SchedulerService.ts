@@ -29,11 +29,10 @@ export class SchedulerService {
     const symbols = env.CANDLE_SYMBOLS.split(',').map((s) => s.trim()).filter(Boolean);
 
     this.task = cron.schedule(expression, async () => {
-      console.log(`[Scheduler] Running alert scan + candle refresh (every ${intervalMinutes}min)...`);
-      await Promise.all([
-        this.agent.runScan(),
-        this.candleRefresh.refresh(symbols),
-      ]);
+      console.log(`[Scheduler] Running candle refresh + alert scan (every ${intervalMinutes}min)...`);
+      // Refresh candles first so alert scan uses up-to-date data
+      await this.candleRefresh.refresh(symbols);
+      await this.agent.runScan();
     });
 
     console.log(`[Scheduler] Started — scanning every ${intervalMinutes} minutes`);
