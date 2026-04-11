@@ -63,11 +63,13 @@ export class TelegramBotService {
       if (!this.isAllowed(ctx)) return;
       await ctx.reply(
         `👋 ยินดีต้อนรับสู่ Forex AI Trading Bot\n\n` +
-        `บอทนี้ช่วยได้ 4 อย่าง:\n` +
+        `📋 คำสั่งที่ใช้ได้:\n\n` +
         `📝 บันทึก trade — พิมพ์ เช่น "บันทึก trade EURUSD BUY 1h"\n` +
         `🏁 ปิด trade — พิมพ์ "ปิด trade"\n` +
         `📊 วิเคราะห์ตลาด — พิมพ์ เช่น "วิเคราะห์ EURUSD 1h"\n` +
-        `📈 สรุปผลการเทรด — พิมพ์ "สรุปอาทิตย์นี้" หรือ /summary\n\n` +
+        `📈 สรุปผลการเทรด — พิมพ์ "สรุปอาทิตย์นี้" หรือ /summary\n` +
+        `🌅 Daily Outlook — /outlook (วิเคราะห์ตลาดประจำวัน)\n` +
+        `⚙️ ตั้งค่าแจ้งเตือน — /settings (เวลา, คู่เงิน, เปิด/ปิด)\n\n` +
         `พิมพ์ /cancel เพื่อยกเลิกคำสั่งปัจจุบัน`
       );
     });

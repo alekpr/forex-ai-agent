@@ -6,6 +6,9 @@ A Telegram-based AI trading assistant for Forex traders. Log trades via natural 
 
 - **Trade Logging via Telegram** — Send a message like "เปิด BUY EURUSD ที่ 1.0850 TF 1h" and the bot extracts all fields using Claude AI (tool_use), asking follow-up questions for any missing data
 - **AI Market Analysis** — On each trade entry, Claude analyzes multi-timeframe indicators and provides commentary in Thai
+- **Daily Outlook (`/outlook`)** — Morning briefing that analyzes D1 → 4H → 1H trends, computes EMA pullback zones, identifies key S/R levels, and produces a Thai-language daily trading plan via Claude AI
+- **Configurable Alerts (`/settings`)** — Inline keyboard to set daily outlook time (6–9 AM Bangkok), symbols (EURUSD / GBPUSD / USDJPY / XAUUSD), and enable/disable automatic scheduling
+- **Trade Summary (`/summary`)** — AI-powered summary of closed trades for today, this week, this month, or last 30 days
 - **AI Lesson Summary** — When closing a trade, Claude generates a personalized lesson based on entry/exit conditions
 - **Backtest Import** — Import historical trades from MT4/MT5 CSV or manually-created CSV files, with AI lesson generation for each trade
 - **Historical Candle Import** — Import OHLCV data from MT4/MT5 History Center CSV, with automatic aggregation to larger timeframes (5m → 15m, 30m, 1h, 4h, 1d)
@@ -82,12 +85,14 @@ npm run build && npm start
 
 The bot supports natural language in Thai and English:
 
-| Action | Example Message |
-|--------|----------------|
-| Open trade | `BUY EURUSD 1.0850 TF 1h SL 1.0820 TP 1.0900` |
-| Close trade | `/close` then select from inline keyboard |
-| View open trades | `/trades` |
-| Help | `/help` |
+| Command / Action | Description |
+|-----------------|-------------|
+| `BUY EURUSD 1.0850 TF 1h SL 1.0820 TP 1.0900` | Open (log) a new trade |
+| `ปิด trade` or `close` | Close an existing trade via inline keyboard |
+| `/summary` | AI summary of closed trades (today / week / month / last 30 days) |
+| `/outlook` | Generate a Daily Outlook for configured symbols right now |
+| `/settings` | Configure daily outlook: time, symbols, enable/disable auto-schedule |
+| `/cancel` | Cancel the current multi-turn conversation |
 
 ## Import Scripts
 
@@ -257,26 +262,93 @@ adjustedTp    = entry ± requiredReward
 
 ---
 
+## Daily Outlook Logic
+
+When `/outlook` is called (or the scheduled cron fires), `DailyOutlookAgent` runs the following pipeline per symbol:
+
+### Step 1 — Cache Check
+If a record for today already exists in `daily_outlook_logs` and has been sent, the cached Telegram message is re-broadcast immediately without re-calling Claude.
+
+### Step 2 — Multi-Timeframe Candle Fetch
+Fetches up to 250 candles for `1h`, `4h`, and `1d` from the database (no force-refresh on scheduled runs).
+
+### Step 3 — D1 Freshness Validation
+
+| D1 candle age | Behaviour |
+|---------------|----------|
+| ≤ 26 h | Fresh — proceed normally |
+| 26 h – 96 h | Weekend gap — proceed with log warning |
+| > 96 h | Stale — skip symbol with error |
+
+The 96-hour window covers the Friday close → Monday 7 AM Bangkok gap (~63 h).
+
+### Step 4 — Trend Direction
+Computed on D1 (macro trend) and 4H (primary trend) using the same EMA-stack + slope logic as `MarketAnalyzerAgent`.
+
+### Step 5 — Pullback Zone Computation
+
+| Zone | Formula | Meaning |
+|------|---------|--------|
+| **Primary** | EMA14 (4H) ± 0.5 × ATR14 | Frequent, shallower pullbacks |
+| **Secondary** | EMA60 (4H) ± 1.0 × ATR14 | Deeper, higher-conviction entries |
+
+### Step 6 — S/R from D1 Candles
+Calls `IndicatorService.computeSupportResistance()` on the full D1 candle series to produce macro pivot points, swing highs/lows, and round levels.
+
+### Step 7 — Claude AI Synthesis
+`ClaudeAiService.generateDailyOutlook()` receives the full multi-TF indicator snapshot, S/R context, pullback zones, and risk level. It returns:
+
+| Field | Description |
+|-------|-------------|
+| `bias` | `BUY` / `SELL` / `NEUTRAL` |
+| `keyResistance` | Nearest resistance price |
+| `keySupport` | Nearest support price |
+| `analysis` | Narrative analysis in Thai |
+| `tradingPlan` | Where to wait for pullback and entry trigger |
+
+### Step 8 — Persist & Broadcast
+The result is upserted into `daily_outlook_logs` (UNIQUE by `user_id + symbol + analysis_date`), then broadcast as MarkdownV2 via `NotificationService.broadcastDailyOutlook()` — which splits messages at 4096-char boundaries and falls back to plain text on parse errors.
+
+---
+
 ## Project Structure
 
 ```
 src/
-├── agents/          # TradeLoggerAgent, MarketAnalyzerAgent
-├── db/              # Connection, migrations (001-007)
-├── importers/       # Mt4CsvParser, ManualBacktestParser, HistoricalIndicatorFetcher
-├── repositories/    # CandleRepository, TradeRepository, ...
-├── services/        # ClaudeAiService, EmbeddingService, CandleService, ...
-│   └── market-data/ # TwelveDataAdapter, FinnhubAdapter
-├── telegram/        # TelegramBotService, IntentRouter
-└── types/           # market.ts, trade.ts, ...
+├── agents/
+│   ├── AutoAlertAgent.ts
+│   ├── DailyOutlookAgent.ts   # Daily Outlook pipeline
+│   ├── MarketAnalyzerAgent.ts
+│   ├── TradeLoggerAgent.ts
+│   └── TradeSummaryAgent.ts
+├── db/
+│   ├── migrations/            # 001–009 (009 adds daily_outlook_logs)
+│   └── migrate.ts
+├── importers/                 # Mt4CsvParser, ManualBacktestParser, HistoricalIndicatorFetcher
+├── repositories/
+│   ├── AlertRepository.ts
+│   ├── CandleRepository.ts
+│   ├── DailyOutlookRepository.ts  # create, markSent, findToday, findRecent
+│   ├── IndicatorRepository.ts
+│   ├── TradeLogRepository.ts
+│   └── TradeResultRepository.ts
+├── services/
+│   ├── ClaudeAiService.ts     # generateAnalysisRecommendation + generateDailyOutlook
+│   ├── NotificationService.ts # sendAlert + broadcastDailyOutlook
+│   ├── SchedulerService.ts    # alert + candle + dailyOutlook cron tasks
+│   └── market-data/           # TwelveDataAdapter, FinnhubAdapter
+├── telegram/
+│   ├── TelegramBotService.ts  # /outlook, /settings, /summary, trade commands
+│   └── formatters.ts          # formatAnalysis, formatDailyOutlook, ...
+└── types/                     # market.ts (PullbackZone, DailyOutlookData), trade.ts, agent.ts
 scripts/
-├── import-backtest.ts   # CLI: import backtest trades
-├── import-candles.ts    # CLI: import historical candles
-├── clear-trade-logs.ts  # CLI: delete trade logs with filters
+├── import-backtest.ts
+├── import-candles.ts
+├── clear-trade-logs.ts
 └── set-telegram-webhook.ts
 data/
-├── backtest-sample.csv      # 15 sample manual backtest trades
-└── EURUSD_M5_sample.csv     # 20 sample 5m candles
+├── backtest-sample.csv
+└── EURUSD_M5_sample.csv
 ```
 
 ## License
