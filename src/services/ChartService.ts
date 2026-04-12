@@ -115,6 +115,7 @@ export class ChartService {
       borderColor: wickColours,
       borderWidth: 0,
       barThickness: 2,
+      grouped: false, // must be on dataset level (Chart.js v4)
       order: 1,
     } as any);
 
@@ -127,6 +128,7 @@ export class ChartService {
       borderColor: wickColours,
       borderWidth: 1,
       barThickness: 8,
+      grouped: false, // must be on dataset level (Chart.js v4)
       order: 0,
     } as any);
 
@@ -299,7 +301,6 @@ export class ChartService {
         },
         scales: {
           x: {
-            grouped: false, // overlay wick + body at same x position (candlestick)
             ticks: {
               color: '#607d8b',
               font: { size: 9 },
