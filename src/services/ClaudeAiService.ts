@@ -94,13 +94,16 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 300,
+      max_tokens: 800,
       messages: [{ role: 'user', content: prompt }],
     });
 
     const rawText = this.extractText(response);
-    // Strip any markdown code fences (e.g. ```json ... ```) before parsing
-    const text = rawText.replace(/```(?:json)?\s*/gi, '').trim();
+    // Strip ALL backtick code fences — both opening (```json) and closing (```)
+    const text = rawText
+      .replace(/```(?:json)?\s*/gi, '')
+      .replace(/```/g, '')
+      .trim();
     try {
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -109,8 +112,8 @@ Pattern tags should be short descriptors like: trend_following, counter_trend, b
           return { lesson: parsed.lesson, patternTags: parsed.pattern_tags ?? [] };
         }
       }
-    } catch {
-      // fallback: return cleaned text
+    } catch (err) {
+      console.error('[ClaudeAiService] generateTradeLesson JSON parse failed:', (err as Error).message, '\nRaw:', text.slice(0, 300));
     }
     return { lesson: text, patternTags: [] };
   }
@@ -223,7 +226,11 @@ Be conservative with confidence scores. Only recommend BUY/SELL if conviction is
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const text = this.extractText(response);
+    const rawText2 = this.extractText(response);
+    const text = rawText2
+      .replace(/```(?:json)?\s*/gi, '')
+      .replace(/```/g, '')
+      .trim();
     try {
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -244,8 +251,8 @@ Be conservative with confidence scores. Only recommend BUY/SELL if conviction is
           analysis: parsed.analysis,
         };
       }
-    } catch {
-      // fallback
+    } catch (err) {
+      console.error('[ClaudeAiService] generateAnalysisRecommendation JSON parse failed:', (err as Error).message, '\nRaw:', text.slice(0, 300));
     }
     return {
       recommendation: 'WAIT',
