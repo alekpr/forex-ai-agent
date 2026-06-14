@@ -17,7 +17,7 @@ export class NotificationService {
     const message = this.formatMessage(payload);
     await Promise.allSettled([
       this.sendLine(message),
-      this.sendTelegram(message),
+      ...this.getAllowedChatIds().map(chatId => this.sendTelegramToChat(chatId, message)),
     ]);
   }
 
@@ -50,12 +50,12 @@ export class NotificationService {
     );
   }
 
-  private async sendTelegram(message: string): Promise<void> {
-    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return;
+  private async sendTelegramToChat(chatId: number, message: string): Promise<void> {
+    if (!env.TELEGRAM_BOT_TOKEN) return;
     await axios.post(
       `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
       {
-        chat_id: env.TELEGRAM_CHAT_ID,
+        chat_id: String(chatId),
         text: message,
         parse_mode: 'HTML',
       }
@@ -63,22 +63,62 @@ export class NotificationService {
   }
 
   /**
-   * Broadcast a daily outlook message to the configured Telegram chat.
+   * Broadcast a daily outlook message to ALL allowed Telegram users.
    * If chartBuffer is provided, sends the chart as a photo first with the symbol+bias
    * as caption, then sends the full analysis text separately.
    * Splits text at newline boundaries if > 4096 chars. Falls back to plain text on parse error.
    */
   async broadcastDailyOutlook(markdownV2Text: string, chartBuffer?: Buffer, photoCaption?: string): Promise<void> {
-    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
+    if (!env.TELEGRAM_BOT_TOKEN) {
       console.warn('[NotificationService] Telegram not configured — skipping daily outlook broadcast');
       return;
     }
 
+    // Resolve all allowed chat IDs — use TELEGRAM_ALLOWED_USER_IDS if available,
+    // otherwise fall back to the legacy single TELEGRAM_CHAT_ID.
+    const chatIds = this.getAllowedChatIds();
+    if (chatIds.length === 0) {
+      console.warn('[NotificationService] No Telegram chat IDs configured — skipping daily outlook broadcast');
+      return;
+    }
+
+    // Broadcast to every allowed user
+    for (const chatId of chatIds) {
+      await this.broadcastToChat(chatId, markdownV2Text, chartBuffer, photoCaption);
+    }
+  }
+
+  /**
+   * Parse TELEGRAM_ALLOWED_USER_IDS into an array of numeric chat IDs.
+   * Falls back to TELEGRAM_CHAT_ID for backward compatibility.
+   */
+  private getAllowedChatIds(): number[] {
+    const raw = env.TELEGRAM_ALLOWED_USER_IDS;
+    if (raw && raw.trim()) {
+      return raw.split(',')
+        .map(s => parseInt(s.trim(), 10))
+        .filter(n => !isNaN(n));
+    }
+    if (env.TELEGRAM_CHAT_ID) {
+      return [parseInt(env.TELEGRAM_CHAT_ID, 10)].filter(n => !isNaN(n));
+    }
+    return [];
+  }
+
+  /**
+   * Send the daily outlook to a single chat ID.
+   */
+  private async broadcastToChat(
+    chatId: number,
+    markdownV2Text: string,
+    chartBuffer?: Buffer,
+    photoCaption?: string
+  ): Promise<void> {
     // Send chart image first if provided
     if (chartBuffer) {
       try {
         const form = new FormData();
-        form.append('chat_id', env.TELEGRAM_CHAT_ID);
+        form.append('chat_id', String(chatId));
         form.append('photo', chartBuffer, { filename: 'outlook.png', contentType: 'image/png' });
         if (photoCaption) {
           form.append('caption', photoCaption.slice(0, 1024)); // Telegram caption limit
@@ -89,7 +129,7 @@ export class NotificationService {
           { headers: form.getHeaders() }
         );
       } catch (err) {
-        console.error('[NotificationService] Failed to send chart image:', (err as Error).message);
+        console.error(`[NotificationService] Failed to send chart image to ${chatId}:`, (err as Error).message);
         // Continue to send text even if image fails
       }
     }
@@ -110,16 +150,15 @@ export class NotificationService {
       try {
         await axios.post(
           `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-          { chat_id: env.TELEGRAM_CHAT_ID, text: chunk, parse_mode: 'MarkdownV2' }
+          { chat_id: String(chatId), text: chunk, parse_mode: 'MarkdownV2' }
         );
       } catch {
         // Fallback: strip MarkdownV2 escapes and send plain text
         const plain = chunk.replace(/\\([_*[\]()~`>#+\-=|{}.!])/g, '$1');
         await axios.post(
           `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-          { chat_id: env.TELEGRAM_CHAT_ID, text: plain }
+          { chat_id: String(chatId), text: plain }
         );
       }
     }
   }
-}
